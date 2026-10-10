@@ -146,7 +146,7 @@ pub struct Options {
 pub fn usage() -> String {
     format!(
         "{name} {version}\n\n\
-         Usage: {slug} [options]\n       {slug} host [--pair] | pair | devices | status | revoke <device>   (share this computer; see `{slug} host --help`)\n       {slug} memory add | edit | show | search | list | pin | forget | ...   (the memory agents share; see `{slug} memory --help`)\n\n\
+         Usage: {slug} [options]\n       {slug} host [--pair] | pair | devices | status | revoke <device>   (share this computer; see `{slug} host --help`)\n       {slug} memory add | edit | show | search | list | pin | forget | ...   (the memory agents share; see `{slug} memory --help`)\n       {slug} task add | list | board | show | edit | move | done | rm | search | mcp   (the board of tasks; see `{slug} task --help`)\n\n\
          Options:\n  \
          --data-dir <path>              Keep the database and settings here\n  \
          --theme <light|dark|system>    Use this appearance for this run\n  \

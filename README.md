@@ -1562,6 +1562,26 @@ on this computer and nowhere else; nothing is captured automatically, terminals
 on other machines do not get it, and the window has no view of it yet.
 [`docs/MEMORY.md`](docs/MEMORY.md) has the whole of it.
 
+## A board of tasks
+
+Leon keeps a board of tasks per project, shared by all its git worktrees, that
+you and your agents both write to. An agent that finds work it does not do now
+creates a task; one that starts a task moves it to `doing`.
+
+```sh
+leon task add --priority high --label backend "Rotate the signing key"
+leon task list                    # open tasks, by column
+leon task board                   # the columns
+leon task move 1a2b3c4d doing
+leon task done 1a2b3c4d
+leon task search signing
+```
+
+`leon task mcp` serves the same board to an agent over MCP; register it in the
+agent's own configuration (`claude mcp add leon-tasks -- leon task mcp`). The
+window's board, and the sync with GitHub issues and Linear, are not here yet.
+[`docs/TASKS.md`](docs/TASKS.md) has the whole of it.
+
 ## Usage
 
 How much of each agent's limits is left, per machine. The footer under the main
@@ -2264,6 +2284,7 @@ exit status: a way to check the terminal against a real agent
 
 * [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): crates, rules, the terminal.
 * [`docs/MEMORY.md`](docs/MEMORY.md): the memory agents share, its command line, the block and MCP.
+* [`docs/TASKS.md`](docs/TASKS.md): the board of tasks, its command line and MCP tools.
 * [`docs/SETTINGS.md`](docs/SETTINGS.md) and [`docs/THEMES.md`](docs/THEMES.md): settings and themes.
 * [`docs/RELEASING.md`](docs/RELEASING.md): how a release is cut, signed and published.
 * [`docs/media/`](docs/media) and [`scripts/media/`](scripts/media): the screenshots and clips of this README, and how they are made.

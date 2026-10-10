@@ -48,6 +48,9 @@ mod schema;
 mod search;
 mod settings;
 mod share;
+mod task_cli;
+mod task_mcp;
+mod tasks;
 mod theme;
 mod trust;
 mod ui;
@@ -106,6 +109,11 @@ fn main() {
     // window: what agents run from a terminal of Leon.
     if let Some((data_dir, rest)) = memory_cli::intercept(&arguments) {
         std::process::exit(memory_cli::run(data_dir, rest));
+    }
+
+    // `leon task ...` is the board's command line, likewise without a window.
+    if let Some((data_dir, rest)) = task_cli::intercept(&arguments) {
+        std::process::exit(task_cli::run(data_dir, rest));
     }
 
     let options = match cli::parse(arguments) {

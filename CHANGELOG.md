@@ -4,6 +4,18 @@
 
 ### Added
 
+* A board of tasks that people and agents share, first the part without a
+  window: `leon task add`, `list`, `board`, `show`, `edit`, `move`, `done`,
+  `rm`, `search` and `mcp`. A task is a title and a body with a column
+  (`backlog`, `todo`, `doing`, `review`, `done`, `canceled`), a priority, labels
+  and an assignee; it belongs to a project, shared by all its git worktrees, or
+  to every project (`--global`). Creating a task whose title an open task
+  already has adds nothing and answers with that task, so an agent that
+  retries does not duplicate it. `leon task mcp` serves the board to an agent
+  (`task_create`, `task_list`, `task_get`, `task_update`, `task_move`,
+  `task_search`; no tool deletes) and is registered by the person in the
+  agent's own configuration: Leon writes nothing into a project for it. See
+  [docs/TASKS.md](docs/TASKS.md).
 * A viewer for pictures. A PNG, JPEG, GIF, WebP, BMP, ICO or TIFF file on this
   computer opens in a tab like a text file does, from the file tree, the quick
   open, a typed path or a link in the terminal, drawn to fit the pane (never

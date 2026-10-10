@@ -33,6 +33,7 @@ mod migrations;
 mod projects;
 pub mod search;
 mod shelf;
+pub mod tasks;
 mod tokens;
 mod usage;
 mod workspace;
