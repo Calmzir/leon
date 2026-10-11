@@ -576,6 +576,8 @@ platform (see below).
 | Settings | `⌘,` | `Ctrl+,` |
 | Show usage | `⇧⌘U` | `Ctrl+Shift+Alt+U` |
 | Refresh usage now | palette only | palette only |
+| Show the task board | `⇧⌘I` | `Ctrl+Shift+Alt+I` |
+| New task… | palette only | palette only |
 | Go home | `⌥⇧⌘H` | `Ctrl+Shift+Alt+H` |
 | Open the Den | `⌥⇧⌘L` | `Ctrl+Shift+Alt+L` |
 | Edit the Den | palette only (`E` in the Den) | palette only (`E` in the Den) |
@@ -1578,8 +1580,16 @@ leon task search signing
 ```
 
 `leon task mcp` serves the same board to an agent over MCP; register it in the
-agent's own configuration (`claude mcp add leon-tasks -- leon task mcp`). The
-window's board, and the sync with GitHub issues and Linear, are not here yet.
+agent's own configuration (`claude mcp add leon-tasks -- leon task mcp`).
+
+The window shows the board too: `⇧⌘I` (`Ctrl+Shift+Alt+I`), or **Show the task
+board** in the palette. The columns are backlog, todo, doing, review and done;
+the arrows (or `h` `j` `k` `l`) move the cursor, `Shift` with them carries the
+card to another column or another place in its column, `n` asks for the title
+of a new task in the cursor's column, `d` finishes the card, `p` raises its
+priority and `g` switches between the project's board and the global one. What
+an agent writes from another process shows up within a couple of seconds. The
+sync with GitHub issues and Linear is not here yet.
 [`docs/TASKS.md`](docs/TASKS.md) has the whole of it.
 
 ## Usage

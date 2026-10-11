@@ -16,6 +16,18 @@
   `task_search`; no tool deletes) and is registered by the person in the
   agent's own configuration: Leon writes nothing into a project for it. See
   [docs/TASKS.md](docs/TASKS.md).
+* The board in the window: `⇧⌘I` (`Ctrl+Shift+Alt+I`) or **Show the task
+  board** shows the project's tasks in columns, and **New task…** in the
+  palette creates one from anywhere. Arrows move the cursor, Shift with them
+  carries a card to another column or place, `n` creates a task, `d` finishes
+  it, `p` raises its priority and `g` switches between the project's board and
+  the global one. What an agent writes from another process appears within a
+  couple of seconds.
+
+### Fixed
+
+* `leon task board` read the board as one list cut at 500 tasks, so a long
+  backlog could hide the other columns; every column is read on its own now.
 * A viewer for pictures. A PNG, JPEG, GIF, WebP, BMP, ICO or TIFF file on this
   computer opens in a tab like a text file does, from the file tree, the quick
   open, a typed path or a link in the terminal, drawn to fit the pane (never

@@ -48,6 +48,7 @@ mod schema;
 mod search;
 mod settings;
 mod share;
+mod task_board;
 mod task_cli;
 mod task_mcp;
 mod tasks;

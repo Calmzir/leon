@@ -661,9 +661,7 @@ fn carry_out(invocation: Invocation) -> Result<(), String> {
             }
         }
         Action::Board { global } => {
-            let found = service
-                .list(global, &TaskFilter::default(), 500)
-                .map_err(said)?;
+            let found = service.board(global, 500).map_err(said)?;
             print(&tasks::board(&found));
         }
         Action::Show { id, json } => {

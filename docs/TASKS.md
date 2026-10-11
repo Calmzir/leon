@@ -4,9 +4,10 @@ Agents find work they do not do now, and people keep a list of what to do. Leon
 keeps one board for both: tasks in Leon's own database, a command line to reach
 them, and an MCP server so an agent can use them without a shell.
 
-This is the first part of the board: the store, `leon task` and `leon task
-mcp`. The board in the window and the synchronisation with GitHub issues and
-Linear come next and are not in Leon yet.
+The board is in the window (`⇧⌘I`, `Ctrl+Shift+Alt+I` elsewhere), in the
+command line (`leon task`) and in an MCP server (`leon task mcp`), all reading
+and writing the same database. The synchronisation with GitHub issues and
+Linear comes next and is not in Leon yet.
 
 Nothing here writes into a project or into an agent's configuration. `leon task
 mcp` is registered by the person who wants it.
@@ -47,6 +48,34 @@ with that task. An agent that retries, or two that find the same chore, do not
 fill the board. A done or canceled task does not count: the same chore can come
 back. A board holds at most 100,000 tasks, a guard against an agent that
 creates in a loop.
+
+## The board in the window
+
+`⇧⌘I` (`Ctrl+Shift+Alt+I` on Linux and Windows) or **Show the task board** in
+the palette opens the board of the project the window is on; **New task…** in
+the palette creates a task from anywhere. The columns are `backlog`, `todo`,
+`doing`, `review` and `done` (a canceled task has no column; `leon task list
+--all` shows it).
+
+| Key | What it does |
+| --- | --- |
+| `←` `→` or `h` `l` | Cursor to the column on the left or right |
+| `↑` `↓` or `k` `j` | Cursor to the card above or below |
+| `Shift` + those | Carry the card: to the bottom of the next column, or one place up or down in its own |
+| `n` | Ask for the title of a new task, in the cursor's column |
+| `d` | Finish the card |
+| `p` | Raise its priority: none, low, medium, high, urgent, none |
+| `g` | Switch between the project's board and the global one |
+| `Esc` | Close |
+
+A click selects a card. The board shows only boards of this computer: for a
+project on another machine, or with no project selected, it shows the global
+board and says why. The window reads the store again every second and a half
+while the board is open, because an agent writes from another process; a card
+that moved is followed by the cursor.
+
+Every change goes through the same operations as the rest of the window's
+writes, so the status line says what was done (`Moved 1a2b3c4d to doing: ...`).
 
 ## The command line
 

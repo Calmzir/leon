@@ -221,6 +221,33 @@ pub enum Op {
         /// The root of the project the terminal's folder belongs to.
         root: String,
     },
+    /// Create a task on the board of a project of this computer, or on the
+    /// global one (`root` is `None`): what `leon task add` does. A task whose
+    /// title an open one already has is not created again.
+    AddTask {
+        /// The root of the project, or `None` for the global board.
+        root: Option<String>,
+        /// What is to be done.
+        title: String,
+        /// The column it starts in.
+        status: leon_core::TaskStatus,
+    },
+    /// Move a task to a column, above `before` when that is given.
+    MoveTask {
+        /// The task.
+        id: String,
+        /// The column.
+        status: leon_core::TaskStatus,
+        /// The task it is placed above.
+        before: Option<String>,
+    },
+    /// Change a task.
+    UpdateTask {
+        /// The task.
+        id: String,
+        /// What changes.
+        patch: leon_core::TaskPatch,
+    },
     /// Give a project another name.
     RenameProject {
         /// The project.
@@ -1698,6 +1725,15 @@ impl Engine {
                 self.write_memory_file(None).await?;
                 Ok(None)
             }
+            Op::AddTask {
+                root,
+                title,
+                status,
+            } => self.add_task(root.as_deref(), &title, status).map(Some),
+            Op::MoveTask { id, status, before } => {
+                self.move_task(&id, status, before.as_deref()).map(Some)
+            }
+            Op::UpdateTask { id, patch } => self.update_task(&id, &patch).map(Some),
             Op::RenameProject { project, name } => self.rename_project(&project, &name).map(Some),
             Op::ReorderProjects { machine, ordered } => {
                 self.reorder_projects(&machine, &ordered).map(Some)
@@ -2991,6 +3027,77 @@ impl Engine {
         let project = self.inner.store.project(id)?;
         self.inner.store.remove_project(id)?;
         Ok(format!("Removed project {}.", project.name))
+    }
+
+    /// Creates a task on a board, or says which open task has its title.
+    fn add_task(
+        &self,
+        root: Option<&str>,
+        title: &str,
+        status: leon_core::TaskStatus,
+    ) -> Result<String, EngineError> {
+        let scope = match root {
+            Some(root) => leon_core::MemoryScope::project(root),
+            None => leon_core::MemoryScope::Global,
+        };
+        let mut new = leon_core::NewTask::titled(scope, title);
+        new.status = Some(status);
+        let saved = self
+            .inner
+            .store
+            .add_task(&new, crate::memory::now_millis())?;
+        Ok(match saved {
+            leon_core::SavedTask::New(task) => {
+                format!(
+                    "Added {} to {}: {}",
+                    task.short_id(),
+                    task.status.as_str(),
+                    task.title
+                )
+            }
+            leon_core::SavedTask::Known(task) => format!(
+                "Already on the board as {} ({}): {}",
+                task.short_id(),
+                task.status.as_str(),
+                task.title
+            ),
+        })
+    }
+
+    /// Moves a task to a column.
+    fn move_task(
+        &self,
+        id: &str,
+        status: leon_core::TaskStatus,
+        before: Option<&str>,
+    ) -> Result<String, EngineError> {
+        let task = self
+            .inner
+            .store
+            .move_task(id, status, before, crate::memory::now_millis())?;
+        Ok(format!(
+            "Moved {} to {}: {}",
+            task.short_id(),
+            task.status.as_str(),
+            task.title
+        ))
+    }
+
+    /// Changes a task.
+    fn update_task(&self, id: &str, patch: &leon_core::TaskPatch) -> Result<String, EngineError> {
+        let task = self
+            .inner
+            .store
+            .update_task(id, patch, crate::memory::now_millis())?;
+        Ok(match patch.priority {
+            Some(priority) if patch.status.is_none() => format!(
+                "Priority of {} is {}: {}",
+                task.short_id(),
+                priority.as_str(),
+                task.title
+            ),
+            _ => format!("Changed {}: {}", task.short_id(), task.title),
+        })
     }
 
     /// Writes the managed block of the shared memory into a project's
@@ -5915,6 +6022,97 @@ branch refs/heads/feature/login
         assert_eq!(rig.runner.calls().len(), FOLDERS.len());
         assert!(most > 1, "they ran side by side");
         assert!(most <= DISCOVERY_PARALLELISM, "{most} at once");
+    }
+
+    #[tokio::test]
+    async fn a_task_is_added_moved_and_changed_through_the_engine() {
+        let rig = rig(ScriptedRunner::new());
+        let root = Some("/srv/api".to_owned());
+        let scope = leon_core::MemoryScope::project("/srv/api");
+        let all = |rig: &Rig| {
+            rig.store
+                .tasks(&scope, &leon_core::TaskFilter::default(), 10)
+                .unwrap()
+        };
+
+        rig.engine
+            .run(Op::AddTask {
+                root: root.clone(),
+                title: "Rotate the key".into(),
+                status: leon_core::TaskStatus::Backlog,
+            })
+            .await;
+        assert!(
+            status(&rig.engine).text.starts_with("Added "),
+            "{}",
+            status(&rig.engine).text
+        );
+        let first = all(&rig).remove(0);
+        assert_eq!(first.status, leon_core::TaskStatus::Backlog);
+
+        // The same title again is not a second task, and says so.
+        rig.engine
+            .run(Op::AddTask {
+                root: root.clone(),
+                title: "rotate the KEY".into(),
+                status: leon_core::TaskStatus::Todo,
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Already on the board"));
+        assert_eq!(all(&rig).len(), 1);
+
+        rig.engine
+            .run(Op::MoveTask {
+                id: first.id.clone(),
+                status: leon_core::TaskStatus::Doing,
+                before: None,
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Moved "));
+        assert_eq!(all(&rig)[0].status, leon_core::TaskStatus::Doing);
+
+        rig.engine
+            .run(Op::UpdateTask {
+                id: first.id.clone(),
+                patch: leon_core::TaskPatch {
+                    priority: Some(leon_core::TaskPriority::Urgent),
+                    ..leon_core::TaskPatch::default()
+                },
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Priority of "));
+        assert_eq!(all(&rig)[0].priority, leon_core::TaskPriority::Urgent);
+
+        // A task that is not there is an error line, not a panic.
+        rig.engine
+            .run(Op::MoveTask {
+                id: "00000000-0000-0000-0000-000000000000".into(),
+                status: leon_core::TaskStatus::Done,
+                before: None,
+            })
+            .await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+    }
+
+    #[tokio::test]
+    async fn a_task_without_a_project_goes_on_the_global_board() {
+        let rig = rig(ScriptedRunner::new());
+        rig.engine
+            .run(Op::AddTask {
+                root: None,
+                title: "Renew the domain".into(),
+                status: leon_core::TaskStatus::Todo,
+            })
+            .await;
+        let global = rig
+            .store
+            .tasks(
+                &leon_core::MemoryScope::Global,
+                &leon_core::TaskFilter::default(),
+                10,
+            )
+            .unwrap();
+        assert_eq!(global.len(), 1);
     }
 
     #[tokio::test]

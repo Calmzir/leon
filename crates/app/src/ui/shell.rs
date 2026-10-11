@@ -127,6 +127,8 @@ pub enum Overlay {
     Connect,
     /// The usage view: how much of each agent's limits is left.
     Usage,
+    /// The board of tasks.
+    Tasks,
     /// "Connect a machine, with a code".
     Pair,
     /// "Share this machine".
@@ -502,6 +504,7 @@ pub struct Shell {
     pub(super) connect_ui: super::connect::ConnectUi,
     /// The usage bar and view.
     pub(super) usage: super::usage_view::UsageUi,
+    pub(super) tasks_ui: super::tasks_view::TasksUi,
     pub(super) den: super::den_view::DenUi,
     /// Following the agents' transcripts for the sessions' lights.
     pub(super) status: super::transcript_watch::StatusUi,
@@ -800,6 +803,10 @@ impl Shell {
                         }
                         // A project somebody just added may be asked about.
                         this.show_memory_offer(cx);
+                        // The board shows what the engine just wrote.
+                        if this.overlay == Overlay::Tasks {
+                            this.tasks_reload();
+                        }
                         cx.notify()
                     })
                     .is_err()
@@ -843,6 +850,7 @@ impl Shell {
             settings_ui,
             connect_ui,
             usage: super::usage_view::UsageUi::default(),
+            tasks_ui: super::tasks_view::TasksUi::default(),
             den: super::den_view::DenUi::default(),
             status: super::transcript_watch::StatusUi::default(),
             home: super::home::HomeUi::default(),
@@ -2682,6 +2690,9 @@ impl Shell {
         if self.overlay == Overlay::Usage && self.usage_key(stroke, window, cx) {
             return true;
         }
+        if self.overlay == Overlay::Tasks && self.tasks_key(stroke, window, cx) {
+            return true;
+        }
         // The Den has the keyboard while it is the main pane's and nothing
         // is open over it: its own keys come before the tree's.
         if self.overlay == Overlay::None
@@ -2960,6 +2971,8 @@ impl Shell {
             },
             C::Settings => self.open_settings(window, cx),
             C::ShowUsage => self.toggle_usage(window, cx),
+            C::ShowTasks => self.toggle_tasks(window, cx),
+            C::NewTask => self.begin_flow(command, window, cx),
             C::ShowDen => self.toggle_den(window, cx),
             C::GoHome => self.go_home(window, cx),
             C::EditDen => self.toggle_den_editor(window, cx),
@@ -3059,6 +3072,7 @@ impl Shell {
                 | Overlay::Problems
                 | Overlay::Connect
                 | Overlay::Usage
+                | Overlay::Tasks
                 | Overlay::Pair
                 | Overlay::Share
                 | Overlay::AddProject
@@ -3104,6 +3118,11 @@ impl Shell {
             | Overlay::Restore
             | Overlay::Problems
             | Overlay::Usage => {
+                self.overlay = Overlay::None;
+                self.focus.focus(window, cx);
+            }
+            Overlay::Tasks => {
+                self.close_tasks();
                 self.overlay = Overlay::None;
                 self.focus.focus(window, cx);
             }
@@ -4011,6 +4030,7 @@ impl Shell {
             Overlay::Settings => self.render_settings(colours, cx).into_any_element(),
             Overlay::Connect => self.render_connect(colours, cx).into_any_element(),
             Overlay::Usage => self.render_usage(colours, cx).into_any_element(),
+            Overlay::Tasks => self.render_tasks(colours, cx).into_any_element(),
             Overlay::Pair => self.render_pair(colours, cx).into_any_element(),
             Overlay::Share => self.render_share(colours, cx).into_any_element(),
             Overlay::Notes => self.render_notes(colours, cx).into_any_element(),

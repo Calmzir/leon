@@ -63,6 +63,7 @@ mod shell;
 mod shelving;
 mod sidebar;
 mod steps;
+mod tasks_view;
 mod terminal_tools;
 mod terminals;
 mod themes;

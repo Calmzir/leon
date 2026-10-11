@@ -7894,6 +7894,9 @@ mod tests_screen;
 #[path = "tests_usage.rs"]
 mod tests_usage;
 
+#[path = "tests_tasks.rs"]
+mod tests_tasks;
+
 #[cfg(leon_posix_tests)]
 #[path = "tests_notify.rs"]
 mod tests_notify;

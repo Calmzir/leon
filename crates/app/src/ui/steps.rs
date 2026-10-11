@@ -892,6 +892,8 @@ pub enum Action {
     SetDen(String),
     /// Save the Den's room as a new den with this name.
     SaveDenAs(String),
+    /// Create a task with this title, on the board the window is on.
+    NewTask(String),
     /// Give the user's den in use this name.
     RenameDen(String),
     /// Delete the user's den in use.
@@ -1050,6 +1052,7 @@ pub fn is_flow(command: Command) -> bool {
             | Command::NewThemeFromCurrent
             | Command::ChooseDen
             | Command::SaveDenAs
+            | Command::NewTask
             | Command::RenameDen
             | Command::DeleteDen
             | Command::MessageLion
@@ -1131,6 +1134,10 @@ pub fn advance(command: Command, answers: &[String], world: &World) -> Outcome {
             [name, ..] => Outcome::Run(Action::NewTheme(name.clone())),
         },
         Command::ChooseDen => choose_den(answers, world),
+        Command::NewTask => match answers {
+            [] => text("Task title", "What is to be done", Validate::Required),
+            [title, ..] => Outcome::Run(Action::NewTask(title.clone())),
+        },
         Command::SaveDenAs => match answers {
             [] => text("Den name", "My den", Validate::Required),
             [name, ..] => Outcome::Run(Action::SaveDenAs(name.clone())),

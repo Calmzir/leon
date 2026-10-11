@@ -107,6 +107,12 @@ impl Service {
         self.store.tasks(&self.scope(global), filter, limit)
     }
 
+    /// The whole board of this project, or the global one, a column at a
+    /// time (see [`load_board`]).
+    pub fn board(&self, global: bool, per_column: usize) -> Result<Vec<Task>, StoreError> {
+        load_board(&self.store, &self.scope(global), per_column)
+    }
+
     /// The best matches for `words` in this project and the global board.
     pub fn search(
         &self,
@@ -116,6 +122,25 @@ impl Service {
     ) -> Result<Vec<TaskHit>, StoreError> {
         self.store.search_tasks(&self.scope(global), words, limit)
     }
+}
+
+/// The tasks of a board, every column read on its own and at most
+/// `per_column` of each, in the order of the board. Reading the board as one
+/// list cut at a limit would let a long backlog hide `doing` and `done`.
+pub fn load_board(
+    store: &Store,
+    scope: &MemoryScope,
+    per_column: usize,
+) -> Result<Vec<Task>, StoreError> {
+    let mut all = Vec::new();
+    for status in TaskStatus::ALL {
+        let filter = TaskFilter {
+            status: Some(status),
+            ..TaskFilter::default()
+        };
+        all.extend(store.tasks(scope, &filter, per_column)?);
+    }
+    Ok(all)
 }
 
 /// What an error says to the person or agent that caused it.
@@ -318,6 +343,31 @@ mod tests {
         assert_eq!(value["labels"][1], "needs review");
         assert_eq!(value["created_at"], 5_000);
         assert_eq!(value["snippet"], "a match here");
+    }
+
+    #[test]
+    fn a_long_backlog_does_not_hide_the_other_columns() {
+        let store = Store::open_in_memory().unwrap();
+        let service = Service::new(store, "/srv/api".to_owned()).at(|| 1);
+        let scope = service.scope(false);
+        for n in 0..6 {
+            let mut new = NewTask::titled(scope.clone(), format!("Backlog {n}"));
+            new.status = Some(TaskStatus::Backlog);
+            service.add(&new).unwrap();
+        }
+        let mut doing = NewTask::titled(scope.clone(), "In flight");
+        doing.status = Some(TaskStatus::Doing);
+        service.add(&doing).unwrap();
+        // One list cut at 3 shows only backlog; the board reads each column.
+        let flat = service.list(false, &TaskFilter::default(), 3).unwrap();
+        assert!(flat.iter().all(|task| task.status == TaskStatus::Backlog));
+        let board = service.board(false, 3).unwrap();
+        let backlog = board
+            .iter()
+            .filter(|t| t.status == TaskStatus::Backlog)
+            .count();
+        assert_eq!(backlog, 3);
+        assert!(board.iter().any(|task| task.title == "In flight"));
     }
 
     #[test]
