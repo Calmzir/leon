@@ -102,7 +102,7 @@ fn main() {
                     },
                 );
                 let on = |gpu: &mut Renderer, ground: f32| {
-                    let mut theme = theme.clone();
+                    let mut theme = theme;
                     theme.background = [ground, ground, ground];
                     gpu.draw(&mesh, &camera, &theme, (WIDE, HIGH))
                         .expect("the lion is drawn")
