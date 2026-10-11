@@ -25,8 +25,8 @@
   the project. **New task…** in the palette creates one from anywhere, and
   what an agent writes from another process appears within a couple of
   seconds.
-* The details of a card (a click on it, or `e`): a drawer beside
-  the columns to read and edit what a card cannot show: the title, a
+* The details of a card (a click on it, or `e`): a drawer over
+  the right edge of the board (it moves nothing) to read and edit what a card cannot show: the title, a
   description of several lines, who it is for, status and priority, labels and
   where its worktree is, with every action in view (start work, mark done,
   cancel, delete). Text is saved when you close it or choose another card;

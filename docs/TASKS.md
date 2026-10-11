@@ -92,8 +92,9 @@ from another process; a card that moved is followed by the cursor.
 
 ### The details of a card
 
-A click on a card, or `e` on the one under the cursor, opens a drawer beside the columns (it does not cover them, so a card can still
-be dragged). It holds what a card cannot show:
+A click on a card, or `e` on the one under the cursor, opens a drawer over the right edge of the board. It floats: the columns keep
+their width and nothing is pushed, and the cards that are not under it can
+still be dragged. It holds what a card cannot show:
 
 * the **title** and the **description**, which has several lines;
 * the **status** and the **priority**, as buttons that apply at once;

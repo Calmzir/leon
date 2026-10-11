@@ -642,13 +642,14 @@ impl Shell {
         root = if board.is_empty() && ui.error.is_none() {
             root.child(self.tasks_empty(c, cx))
         } else {
-            // The columns and, beside them, the details of a card: a drag
-            // still has every column to land in.
+            // The columns, and over their right edge the details of a card:
+            // the columns keep their width, nothing is pushed.
             root.child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
+                    .relative()
                     .overflow_hidden()
                     .flex()
                     .child(self.tasks_lanes(c, cx))

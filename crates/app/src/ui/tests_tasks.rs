@@ -575,11 +575,31 @@ fn a_card_can_still_be_dragged_while_the_details_are_open(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn the_drawer_and_its_buttons_are_inside_the_board_at_any_width(cx: &mut TestAppContext) {
-    let (h, _id) = with_the_drawer_open(cx);
+fn the_drawer_floats_over_the_columns_and_pushes_nothing(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    let id = written_elsewhere(&h, "Fix the login", 1, cx);
+    let columns_before = h.bounds_of("tasks-columns".to_owned(), cx).unwrap();
+    let card_before = h.bounds_of("tasks-card-1-0".to_owned(), cx).unwrap();
+    h.press("e", cx);
+    assert!(h.shows("tasks-drawer", cx));
+    // The columns and the card are where they were.
+    let columns = h.bounds_of("tasks-columns".to_owned(), cx).unwrap();
+    assert_eq!(columns, columns_before);
+    assert_eq!(
+        h.bounds_of("tasks-card-1-0".to_owned(), cx).unwrap(),
+        card_before
+    );
+    // The drawer is over the board's right edge, inside it, and its buttons
+    // are all inside it.
     let board = h.bounds_of("tasks".to_owned(), cx).unwrap();
+    let drawer = h.bounds_of("tasks-drawer".to_owned(), cx).unwrap();
+    assert_eq!(drawer.right(), columns.right());
+    assert!(drawer.left() > board.left() && drawer.left() < drawer.right());
+    // It covers the last column, which is still drawn under it.
+    let last = h.bounds_of("tasks-column-4".to_owned(), cx).unwrap();
+    assert!(last.right() > drawer.left(), "{last:?} {drawer:?}");
     for selector in [
-        "tasks-drawer",
         "task-status-done",
         "task-priority-urgent",
         "task-action-start",
@@ -591,18 +611,11 @@ fn the_drawer_and_its_buttons_are_inside_the_board_at_any_width(cx: &mut TestApp
             .bounds_of(selector.to_owned(), cx)
             .unwrap_or_else(|| panic!("{selector} is not drawn"));
         assert!(
-            bounds.left() >= board.left() && bounds.right() <= board.right(),
-            "{selector} {bounds:?} is outside the board {board:?}"
+            bounds.left() >= drawer.left() && bounds.right() <= drawer.right(),
+            "{selector} {bounds:?} is outside the drawer {drawer:?}"
         );
     }
-    // The columns give way to it: every one is still drawn and the drawer
-    // starts where the last of them ends.
-    let drawer = h.bounds_of("tasks-drawer".to_owned(), cx).unwrap();
-    let last = h.bounds_of("tasks-column-4".to_owned(), cx).unwrap();
-    assert!(
-        last.right() <= drawer.left() + px(1.),
-        "{last:?} {drawer:?}"
-    );
+    let _ = id;
 }
 
 #[gpui_kit::test]

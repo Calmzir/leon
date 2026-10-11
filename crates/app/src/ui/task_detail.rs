@@ -1,11 +1,11 @@
-//! The details of a task: a drawer beside the columns of the board.
+//! The details of a task: a drawer over the right edge of the board.
 //!
 //! It reads and edits what a card cannot show: the title, the description
 //! (several lines), who it is for, its labels, its status and priority, and
 //! where the work on it is. What can be done to it is in view at the bottom:
-//! start work or open its worktree, finish, cancel, delete. It sits beside
-//! the columns, not over them, so a card can still be dragged while it is
-//! open.
+//! start work or open its worktree, finish, cancel, delete. It floats over
+//! the columns and pushes nothing: they keep their width and the cards that
+//! are not under it can still be dragged while it is open.
 //!
 //! **Keys.** While a field of the drawer has the keyboard nothing but its own
 //! keys is the board's: `Esc` saves and closes, `Cmd+Enter` or `Ctrl+Enter`
@@ -742,14 +742,21 @@ impl Shell {
             div()
                 .id("tasks-drawer")
                 .debug_selector(|| "tasks-drawer".into())
-                .flex_none()
+                // Over the board, against its right edge, as tall as it.
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
                 .w(width)
-                .h_full()
                 .flex()
                 .flex_col()
                 .border_l_1()
-                .border_color(c.border)
+                .border_color(c.elevated_border)
                 .bg(c.surface)
+                .shadow_md()
+                // What is under it does not hear the pointer.
+                .occlude()
+                .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .flex_none()
