@@ -45,7 +45,7 @@ Leon for desktop (macOS, Linux or Windows), free at getleon.dev, with the agents
   - Name: Demo computer
   - Username / password: leave empty
   - Instructions: Leon drives coding agents running on the user's own computer, which needs the Leon desktop app. To review without it, tap "Try a demo" on the first screen: it adds a simulated computer with sample projects, sessions and a working agent conversation, entirely on the device.
-- **Content rating** (IARC questionnaire): category "All other app types"; answer No to every question (no violence, sexuality, language, drugs, gambling, user-to-user communication, location sharing, purchases). Expected rating: Everyone / PEGI 3.
+- **Content rating** (IARC questionnaire): category "All other app types"; answer Yes to "Online content" (it names generated AI content, and the app shows what the agents answer) and No to every other question (no violence, sexuality, language, drugs, gambling, user-to-user communication, location sharing, purchases). Rating given: all ages.
 - **Target audience**: 18 and over. Not designed for children.
 - **News app**: No.
 - **Government app**: No.
@@ -65,4 +65,5 @@ Leon for desktop (macOS, Linux or Windows), free at getleon.dev, with the agents
 - **Type**: Data sync (`FOREGROUND_SERVICE_DATA_SYNC`)
 - **What it does**: While an agent is working on the user's computer, the app keeps its connection to that computer open, so that a question or permission request from the agent reaches the user at once, even with the screen off. The service runs only while a turn the user started is in flight, shows an ongoing notification saying so, and stops when the agent finishes.
 - **User impact if deferred or interrupted**: The agent on the computer would wait for an answer the user is never told about, and the work the user asked for would stall.
-- **Video**: a short screen recording of starting a turn, locking the phone, and the permission notification arriving.
+- **Task**: Network processing → Other. The form asks only for this and the video; the two texts above are for when a reviewer asks.
+- **Video**: a short screen recording of starting a turn, leaving the app, the ongoing notification, and answering the agent on the way back.
