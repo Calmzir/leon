@@ -5776,7 +5776,11 @@ mod live {
         // The card is the overlay's: elevated, anchored near the row.
         let menu = h.bounds_of("context-menu".to_owned(), cx).unwrap();
         let row = h.bounds_of(format!("tree-row-{at}"), cx).unwrap();
-        assert!(menu.top() >= row.top() - px(2.), "{menu:?} for {row:?}");
+        // At the row: below it, or moved up as far as the window needs.
+        assert!(
+            menu.top() <= row.bottom() && menu.bottom() >= row.top(),
+            "{menu:?} for {row:?}"
+        );
         // A click outside closes it.
         let layer = h.bounds_of("menu-layer".to_owned(), cx).unwrap();
         let mut visual = VisualTestContext::from_window(h.window.into(), cx);
