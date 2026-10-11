@@ -707,6 +707,8 @@ fn the_narrator_tells_what_happens_and_turns_its_templates() {
             "moss",
             Event::ToolFinished {
                 kind: ToolKind::Edit,
+                tool: String::new(),
+                detail: None,
                 ok: true,
             },
         ),
@@ -793,7 +795,7 @@ fn what_an_agent_says_goes_in_the_feed_as_it_said_it_under_its_lion() {
         1,
         "moss",
         &[
-            crate::feed::Past::Tool,
+            crate::feed::Past::Tool(String::new()),
             crate::feed::Past::Speech("Earlier.".into(), Some(3_000)),
         ],
     );
@@ -817,6 +819,8 @@ fn a_command_that_ends_leaves_a_tick_or_a_cross_over_its_lion_for_a_moment() {
             "moss",
             Event::ToolFinished {
                 kind: ToolKind::Run,
+                tool: String::new(),
+                detail: None,
                 ok,
             },
         )

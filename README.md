@@ -1823,14 +1823,18 @@ On the right, under the roster of the pride (each lion with its `Lv.`, the
 number of tools it has used), is **the feed**: a log with the newest at the
 bottom and two kinds of entry. The narrator's lines tell what happens in the
 voice of an old creature game and never invent: every line is a fact (`MOSS
-used CARGO TEST!`, `It's super effective!` only when the command passed).
-And what an agent **wrote to you** is there in its own words, marked `said`,
-unchanged: a long message shows its first rows, and a click opens it. Each
-entry has the colour of its lion's mane, its name and how long ago it was.
+used CARGO TEST!`, then `CARGO TEST landed. It's super effective!` only when
+the command passed). And what an agent **wrote to you** is there in its own
+words, unchanged, on a raised ground with a bar at its left: a long message
+shows its first rows, and a click opens it. The agent's words are what is
+read first; the narrator's lines around them are muted. What a lion did and
+said in a row stands under one heading: the colour of its mane, its name in
+full as far as the row has room, and how long ago it was. The lines under it
+do not say the name again (`used CARGO TEST!` under `MOSS`).
 When the Den opens, the feed already holds the last of each session's past:
-its messages, and one line for the tools of each turn (`MOSS used 14 tools.`)
-rather than one per tool; the same goes for what happened while the Den was
-closed. It follows its end until you scroll back (the wheel, `Page Up`,
+its messages, and one line for the tools of each turn, which names them
+(`MOSS used 5 tools: Read x3, Edit, Bash.`), rather than one per tool; the
+same goes for what happened while the Den was closed. It follows its end until you scroll back (the wheel, `Page Up`,
 `Page Down`, `Home`); then it stays put and a mark says how many entries are
 new (`End` or a click goes back). `Shift+Up` and `Shift+Down` walk the entries
 and `Enter` opens the message the keyboard is on. Selecting a lion narrows
@@ -1876,11 +1880,18 @@ whose transcript Leon follows, since nothing else tells a prompt from a
 question, so a remote session and a lion that runs elsewhere are not
 messaged. **Send home** always asks first: it stops the agent and leaves the
 session in the sidebar, asleep, to be woken where it left off; **Close** is
-the one that takes it out of the sidebar. The card of a lion ends with a
-summary of its session, made of facts alone, in two groups: what you first
-and last wrote to it, the agent's last words and how many messages; then its
-agent and model, its project and branch, its title, for how long it has run,
-tools used and failed, the context used and the sub-agents out.
+the one that takes it out of the sidebar. The card of a lion says where its
+session left off, so that you need not open its terminal to know: under its
+state, and under what it asks when it asks, **what the agent last said** (in
+its own words, up to six rows, in the colour of what is read), then what you
+last asked of it, then the facts in a few muted lines: its agent and model,
+its project and branch, its title when its name does not say it already, how
+many messages and for how long it has run, the tools that failed, the context
+used, the sub-agents out and the messages queued. A rule parts the groups. A
+session whose transcript Leon does not follow (opencode, a remote session)
+has no live picture, but its history is imported whenever its agent goes
+quiet: its card says the last the history holds, under `LAST IN HISTORY` and
+how long ago that was said.
 
 **The Den is where many agents are steered from.** The roster lists first the
 lions that need you (a permission prompt, then whoever waits longest, then

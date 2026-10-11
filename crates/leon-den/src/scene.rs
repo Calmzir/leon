@@ -19,10 +19,11 @@
 //! and under the pride the sessions that were sent home, each with the way
 //! back ([`Scene::home_rows`]). The truth card has the lion's state, then
 //! the host's own lines ([`crate::sim::Note`]): what is asked stands out,
-//! the rest is in groups under their headings. A card that would cover its
-//! lion, or that takes more than two thirds of the view's height or a third
-//! of the room, says less
-//! from its end. The keys of the Den, while the host shows them, are a box
+//! then what the agent last said, in the colour of what is read, then the
+//! facts in the muted one; a rule is drawn between the groups. A card that
+//! would cover its lion, or that takes more than two thirds of the view's
+//! height or a third of the room, says less: the facts go first, from their
+//! end. The keys of the Den, while the host shows them, are a box
 //! over everything else.
 
 use gpui_kit::Hsla;
@@ -775,12 +776,7 @@ fn feed_box(
         }
         match &row.kind {
             crate::feed::RowKind::Gap => {}
-            crate::feed::RowKind::Heading {
-                tint,
-                name,
-                time,
-                speech,
-            } => {
+            crate::feed::RowKind::Heading { tint, name, time } => {
                 // The swatch: the colour of the lion's mane.
                 let side = unit * 6;
                 let (sx, sy) = (at(0) + unit, y + (line_h - side) / 2);
@@ -802,13 +798,13 @@ fn feed_box(
                     },
                     tint.unwrap_or(palette.text_muted),
                 );
-                let room = chars.saturating_sub(indent + 6 + time.chars().count());
-                let name = clip(name, room.max(4));
-                let after = indent + name.chars().count() + 1;
-                scene.text(at(indent), y, name, palette.text, true);
-                if *speech {
-                    scene.text(at(after), y, "said", palette.text_muted, false);
-                }
+                // The name has the whole row but the time and a space.
+                let taken = match time.chars().count() {
+                    0 => 0,
+                    time => time + 1,
+                };
+                let room = chars.saturating_sub(indent + taken);
+                scene.text(at(indent), y, clip(name, room.max(4)), palette.text, true);
                 if !time.is_empty() {
                     scene.text(
                         at(chars.saturating_sub(time.chars().count())),
@@ -844,6 +840,8 @@ fn feed_box(
                         }
                     }
                 }
+                // The narrator is the quiet voice of the feed: what the
+                // agent said is what is read first.
                 scene.text(
                     at(indent),
                     y,
@@ -851,7 +849,7 @@ fn feed_box(
                     if *urgent {
                         palette.warning
                     } else {
-                        palette.text
+                        palette.text_muted
                     },
                     *urgent,
                 );
@@ -1158,7 +1156,9 @@ pub const CARD_CHARS: usize = 40;
 /// How many rows of detail the truth card shows at most.
 pub const CARD_DETAIL_ROWS: usize = 4;
 /// How many rows the host's notes take on the truth card at most.
-pub const CARD_NOTES: usize = 22;
+pub const CARD_NOTES: usize = 28;
+/// How many rows what the agent last said takes at most.
+pub const CARD_SAID_ROWS: usize = 6;
 /// How many rows what the user is asked takes at most.
 pub const CARD_ASKED_ROWS: usize = 5;
 /// How many sessions at home the roster names at most.
@@ -1231,26 +1231,58 @@ fn truth_card(
     let limit = (((layout.field.w - pad * 4) as f32 / char_w) as usize).clamp(16, CARD_CHARS);
 
     // A line and how long it is kept when the card has no room: what the
-    // lion is and does stays, what it asks goes last, the summary first.
+    // lion is and does stays, what it asks goes last, then what it last
+    // said, the facts first.
     #[derive(Clone, Copy, PartialEq, PartialOrd)]
     enum Keep {
         Summary,
+        Said,
         Asked,
         Always,
     }
-    let title = format!(
-        "{}  Lv.{}",
-        clip(&card.name, limit.saturating_sub(9)),
-        card.level
-    );
-    let mut lines: Vec<(String, Hsla, bool, Keep)> =
-        vec![(title, palette.text, true, Keep::Always)];
+    #[derive(Clone, Copy, PartialEq)]
+    enum Part {
+        Text,
+        Heading,
+        Rule,
+    }
+    #[derive(Clone)]
+    struct Line {
+        text: String,
+        color: Hsla,
+        bold: bool,
+        keep: Keep,
+        part: Part,
+    }
+    let text = |text: String, color: Hsla, bold: bool, keep: Keep| Line {
+        text,
+        color,
+        bold,
+        keep,
+        part: Part::Text,
+    };
+    // Nothing is known of a mystery but its terminal: it has no level.
+    let title = if card.mystery {
+        clip(&card.name, limit)
+    } else {
+        format!(
+            "{}  Lv.{}",
+            clip(&card.name, limit.saturating_sub(9)),
+            card.level
+        )
+    };
+    let mut lines: Vec<Line> = vec![text(title, palette.text, true, Keep::Always)];
     let state_color = card
         .status
-        .map_or(palette.text_muted, |status| status_color(palette, status));
-    lines.push((clip(card.label, limit), state_color, false, Keep::Always));
+        .map_or(palette.text, |status| status_color(palette, status));
+    lines.push(text(
+        clip(card.label, limit),
+        state_color,
+        true,
+        Keep::Always,
+    ));
     if let Some(parent) = &card.parent {
-        lines.push((
+        lines.push(text(
             clip(&format!("Sub-agent of {parent}"), limit),
             palette.text_muted,
             false,
@@ -1259,31 +1291,91 @@ fn truth_card(
     }
     if let Some(detail) = &card.detail {
         for row in wrap_detail(detail, limit, CARD_DETAIL_ROWS) {
-            lines.push((row, palette.text, false, Keep::Always));
+            lines.push(text(row, palette.text, false, Keep::Always));
         }
     }
     if card.mystery {
-        lines.push((
-            clip("No transcript: only working or quiet.", limit),
+        // With the end of its history under it, the card is not empty: it
+        // says that what follows is the past.
+        let recalled = card.notes.iter().any(|note| note.tone == NoteTone::Said);
+        let known = if recalled {
+            "No transcript: below is its history."
+        } else {
+            "No transcript: only working or quiet."
+        };
+        lines.push(text(
+            clip(known, limit),
             palette.text_muted,
             false,
             Keep::Always,
         ));
     }
-    // The host's own lines: what the lion asks, then the summary in groups.
+    // The host's own lines: what the lion asks, what it last said, then the
+    // facts, each group under a rule.
     let core = lines.len();
     for note in &card.notes {
-        let (rows, color, bold, keep) = match note.tone {
-            NoteTone::Urgent => (CARD_ASKED_ROWS, palette.text, false, Keep::Asked),
-            NoteTone::Heading => (1, palette.text_muted, true, Keep::Summary),
-            NoteTone::Plain => (2, palette.text_muted, false, Keep::Summary),
+        let (rows, color, bold, keep, part) = match note.tone {
+            NoteTone::Urgent => (
+                CARD_ASKED_ROWS,
+                palette.text,
+                false,
+                Keep::Asked,
+                Part::Text,
+            ),
+            NoteTone::Said => (CARD_SAID_ROWS, palette.text, false, Keep::Said, Part::Text),
+            NoteTone::Heading => (1, palette.text_muted, true, Keep::Always, Part::Heading),
+            NoteTone::Plain => (2, palette.text_muted, false, Keep::Summary, Part::Text),
+            NoteTone::Rule => (1, palette.rule, false, Keep::Always, Part::Rule),
         };
+        if part == Part::Rule {
+            if lines.len() - core < CARD_NOTES {
+                lines.push(Line {
+                    text: String::new(),
+                    color,
+                    bold,
+                    keep,
+                    part,
+                });
+            }
+            continue;
+        }
         for row in wrap_detail(&note.text, limit, rows) {
             if lines.len() - core < CARD_NOTES {
-                lines.push((row, color, bold, keep));
+                lines.push(Line {
+                    text: row,
+                    color,
+                    bold,
+                    keep,
+                    part,
+                });
             }
         }
     }
+    // A heading with nothing under it says nothing, and neither does a rule
+    // with nothing under it.
+    let tidy = |lines: &mut Vec<Line>| loop {
+        let idle = (0..lines.len()).find(|&at| {
+            let next = lines.get(at + 1).map(|line| line.part);
+            match lines[at].part {
+                Part::Text => false,
+                Part::Heading => next != Some(Part::Text),
+                Part::Rule => !matches!(next, Some(Part::Text | Part::Heading)),
+            }
+        });
+        match idle {
+            Some(at) => {
+                lines.remove(at);
+            }
+            None => break,
+        }
+    };
+    tidy(&mut lines);
+    // A rule takes less room than a row of text.
+    let rule_h = layout.px(9.);
+    let height = |line: &Line| match line.part {
+        Part::Rule => rule_h,
+        Part::Text | Part::Heading => line_h,
+    };
 
     let unit = layout.unit;
     // A lion that the picture does not show is taken to be in its middle.
@@ -1348,14 +1440,14 @@ fn truth_card(
     };
     // The best place for a card of these lines, and how much of its own
     // lion it would cover there.
-    let place = |lines: &[(String, Hsla, bool, Keep)]| {
+    let place = |lines: &[Line]| {
         let widest = lines
             .iter()
-            .map(|(text, ..)| text.chars().count())
+            .map(|line| line.text.chars().count())
             .max()
             .unwrap_or(0);
         let w = (char_w * widest as f32).ceil() as i32 + pad * 2;
-        let h = line_h * lines.len() as i32 + pad * 2;
+        let h = lines.iter().map(height).sum::<i32>() + pad * 2;
         let (min_x, max_x) = (
             layout.field.x + margin,
             (layout.field.x + layout.field.w - w - margin).max(layout.field.x + margin),
@@ -1409,9 +1501,9 @@ fn truth_card(
         (rect, overlap(rect, own) > 0 || !fits)
     };
     // A card that would cover its lion, or that is too high for the view,
-    // says less: the summary goes from its end, then what is asked, and the
-    // card says that there is more.
-    let more = (
+    // says less: the facts go from their end, then what it last said, then
+    // what is asked, and the card says that there is more.
+    let more = text(
         "\u{2026}".to_owned(),
         palette.text_muted,
         false,
@@ -1424,20 +1516,17 @@ fn truth_card(
             shown.push(more.clone());
         }
         let (rect, covers) = place(&shown);
-        let droppable = lines
-            .iter()
-            .rposition(|line| line.3 == Keep::Summary)
-            .or_else(|| lines.iter().rposition(|line| line.3 == Keep::Asked));
+        let droppable = [Keep::Summary, Keep::Said, Keep::Asked]
+            .into_iter()
+            .find_map(|keep| {
+                lines
+                    .iter()
+                    .rposition(|line| line.part == Part::Text && line.keep == keep)
+            });
         match droppable.filter(|_| covers) {
             Some(at) => {
                 lines.remove(at);
-                // A heading with nothing left under it says nothing.
-                while lines
-                    .last()
-                    .is_some_and(|line| line.2 && line.3 == Keep::Summary)
-                {
-                    lines.pop();
-                }
+                tidy(&mut lines);
                 cut = true;
             }
             None => {
@@ -1446,9 +1535,24 @@ fn truth_card(
             }
         }
     };
-    let Rect { x, y, .. } = rect;
+    let Rect { x, w, .. } = rect;
     frame_box(scene, rect, layout, palette);
-    for (index, (text, color, bold, _)) in lines.into_iter().enumerate() {
-        scene.text(x + pad, y + pad + index as i32 * line_h, text, color, bold);
+    let mut y = rect.y + pad;
+    for line in lines {
+        let h = height(&line);
+        if line.part == Part::Rule {
+            scene.fill(
+                Rect {
+                    x,
+                    y: y + h / 2,
+                    w,
+                    h: layout.px(1.),
+                },
+                line.color,
+            );
+        } else {
+            scene.text(x + pad, y, line.text, line.color, line.bold);
+        }
+        y += h;
     }
 }

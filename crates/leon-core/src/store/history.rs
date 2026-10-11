@@ -162,6 +162,34 @@ impl Store {
         })
     }
 
+    /// The newest message of a session that `role` wrote and that says
+    /// something, if there is one: the end of a conversation, without
+    /// reading the whole of it.
+    pub fn session_last_message(&self, id: &SessionId, role: Role) -> Result<Option<Message>> {
+        self.read(|connection| {
+            let mut statement = connection.prepare_cached(
+                "SELECT m.seq, m.text, m.at FROM message m
+                 JOIN session s ON s.pk = m.session_pk
+                 WHERE s.id = ?1 AND m.role = ?2
+                   AND trim(m.text, ' ' || char(9) || char(10) || char(13)) <> ''
+                 ORDER BY m.seq DESC
+                 LIMIT 1",
+            )?;
+            let message = statement
+                .query_row((id.as_str(), role.as_str()), |row| {
+                    Ok(Message {
+                        session_id: id.clone(),
+                        seq: row.get(0)?,
+                        role,
+                        text: row.get(1)?,
+                        at: from_millis(row.get(2)?),
+                    })
+                })
+                .optional()?;
+            Ok(message)
+        })
+    }
+
     /// Gives a session the name a person chose (`None` or blank takes it back
     /// to the agent's own title). Imports never overwrite it.
     pub fn rename_session(&self, id: &SessionId, name: Option<&str>) -> Result<()> {
@@ -670,6 +698,34 @@ mod tests {
         assert_eq!(messages[1].text, "Read: src/login.rs");
         assert_eq!(messages[2].at, at(200));
         assert_eq!(messages[0].session_id, id);
+    }
+
+    #[test]
+    fn the_end_of_a_conversation_is_read_without_the_rest_of_it() {
+        let store = Store::open_in_memory().unwrap();
+        let mut messages = transcript();
+        messages.push(message(Role::User, "and the logout?", 300));
+        // A message that says nothing is not the end of anything.
+        messages.push(message(Role::Assistant, "  \n", 310));
+        let id = store.upsert_session(&session("s1"), &messages).unwrap();
+
+        let said = store
+            .session_last_message(&id, Role::Assistant)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (said.text.as_str(), said.seq),
+            ("the redirect was wrong", 2)
+        );
+        assert_eq!((said.at, said.role), (at(200), Role::Assistant));
+        let asked = store.session_last_message(&id, Role::User).unwrap();
+        assert_eq!(asked.unwrap().text, "and the logout?");
+        assert_eq!(store.session_last_message(&id, Role::System).unwrap(), None);
+        let nobody = SessionId::from_string("nope");
+        assert_eq!(
+            store.session_last_message(&nobody, Role::User).unwrap(),
+            None
+        );
     }
 
     #[test]

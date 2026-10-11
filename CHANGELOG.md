@@ -20,6 +20,22 @@
   system default** and **Open folder**; Cmd or Ctrl and click opens it in
   Leon at once, as before.
 
+### Changed
+
+* The card of a lion in the Den says where its session left off. What the
+  agent last said comes first, in its own words and at length; then what you
+  last asked of it; then the facts of the session in a few short muted lines.
+  A rule parts the groups, the state is in the heavier weight, and a title
+  that only repeats the name is left out. A session whose transcript Leon
+  does not follow (opencode, a remote session) says the last its history
+  holds and how old that is, instead of only "No transcript".
+* The feed of the Den is easier to read. What a lion did and said in a row
+  stands under one heading with its name in full, not cut at twelve letters;
+  what the agent wrote is what stands out and the narrator's lines are muted;
+  the line for a command that ended names the command (`CARGO TEST landed.
+  It's super effective!`), and the line that sums up the tools of a past turn
+  names them (`MOSS used 5 tools: Read x3, Edit, Bash.`).
+
 ## [0.8.0] - 2026-10-09
 
 ### Added

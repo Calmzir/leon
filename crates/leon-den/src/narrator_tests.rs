@@ -29,10 +29,14 @@ fn every_event() -> Vec<Event> {
         Event::Joined,
         Event::ToolFinished {
             kind: ToolKind::Run,
+            tool: String::new(),
+            detail: None,
             ok: true,
         },
         Event::ToolFinished {
             kind: ToolKind::Edit,
+            tool: String::new(),
+            detail: None,
             ok: false,
         },
         Event::SentOut {
@@ -218,10 +222,44 @@ fn nothing_is_made_up() {
     assert_eq!(
         narrated(Event::ToolFinished {
             kind: ToolKind::Run,
+            tool: String::new(),
+            detail: None,
             ok: true
         })
         .as_deref(),
         Some("It's super effective!")
+    );
+    // It names the command, and a tool that failed, so that the line stands
+    // on its own in the feed.
+    assert_eq!(
+        narrated(Event::ToolFinished {
+            kind: ToolKind::Run,
+            tool: "Bash".into(),
+            detail: Some("cargo test -p leon-den".into()),
+            ok: true
+        })
+        .as_deref(),
+        Some("CARGO TEST landed.\nIt's super effective!")
+    );
+    assert_eq!(
+        narrated(Event::ToolFinished {
+            kind: ToolKind::Run,
+            tool: "Bash".into(),
+            detail: Some("cargo test -p leon-den".into()),
+            ok: false
+        })
+        .as_deref(),
+        Some("CARGO TEST missed.\nIt's not very effective...")
+    );
+    assert_eq!(
+        narrated(Event::ToolFinished {
+            kind: ToolKind::Edit,
+            tool: "Edit".into(),
+            detail: Some("src/shell.rs".into()),
+            ok: false
+        })
+        .as_deref(),
+        Some("EDIT missed.\nIt's not very effective...")
     );
     for kind in [
         ToolKind::Edit,
@@ -229,9 +267,23 @@ fn nothing_is_made_up() {
         ToolKind::Search,
         ToolKind::Web,
     ] {
-        assert_eq!(narrated(Event::ToolFinished { kind, ok: true }), None);
         assert_eq!(
-            narrated(Event::ToolFinished { kind, ok: false }).as_deref(),
+            narrated(Event::ToolFinished {
+                kind,
+                tool: String::new(),
+                detail: None,
+                ok: true
+            }),
+            None
+        );
+        assert_eq!(
+            narrated(Event::ToolFinished {
+                kind,
+                tool: String::new(),
+                detail: None,
+                ok: false
+            })
+            .as_deref(),
             Some("It's not very effective...")
         );
     }
@@ -484,6 +536,35 @@ fn every_line_of_the_narrator_has_a_plain_twin_that_says_the_fact_and_nothing_el
         (
             Event::ToolFinished {
                 kind: ToolKind::Run,
+                tool: "Bash".into(),
+                detail: Some("cargo  test".into()),
+                ok: true,
+            },
+            "Passed: `cargo test`",
+        ),
+        (
+            Event::ToolFinished {
+                kind: ToolKind::Run,
+                tool: "Bash".into(),
+                detail: Some("cargo test".into()),
+                ok: false,
+            },
+            "Failed: `cargo test`",
+        ),
+        (
+            Event::ToolFinished {
+                kind: ToolKind::Edit,
+                tool: "Edit".into(),
+                detail: Some("a.rs".into()),
+                ok: false,
+            },
+            "Edit failed.",
+        ),
+        (
+            Event::ToolFinished {
+                kind: ToolKind::Run,
+                tool: String::new(),
+                detail: None,
                 ok: true,
             },
             "The command passed.",
@@ -491,6 +572,8 @@ fn every_line_of_the_narrator_has_a_plain_twin_that_says_the_fact_and_nothing_el
         (
             Event::ToolFinished {
                 kind: ToolKind::Edit,
+                tool: String::new(),
+                detail: None,
                 ok: false,
             },
             "It failed.",
@@ -533,6 +616,8 @@ fn every_line_of_the_narrator_has_a_plain_twin_that_says_the_fact_and_nothing_el
         "moss",
         Event::ToolFinished {
             kind: ToolKind::Read,
+            tool: String::new(),
+            detail: None,
             ok: true,
         },
     );

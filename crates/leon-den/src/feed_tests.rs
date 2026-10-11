@@ -68,7 +68,7 @@ fn what_happens_is_added_at_the_end_and_the_same_line_twice_counts() {
     assert_eq!(feed.len(), 1);
     let entry = feed.entries().next().unwrap();
     assert_eq!((entry.count, entry.item.at), (2, Some(130)));
-    assert_eq!(body(&lay(&feed, &show(40))), ["MOSS used READ! (x2)"]);
+    assert_eq!(body(&lay(&feed, &show(40))), ["used READ! (x2)"]);
     // Another lion's same words, another line, urgent lines and speech are
     // entries of their own.
     feed.push(told(2, "fern", "MOSS used READ!", 131), T0);
@@ -117,22 +117,22 @@ fn the_feed_keeps_a_number_of_entries_and_drops_the_oldest() {
 #[test]
 fn the_past_of_a_session_is_its_messages_and_one_line_for_the_tools_of_a_turn() {
     let past = [
-        Past::Tool,
-        Past::Tool,
-        Past::Tool,
+        Past::Tool(String::new()),
+        Past::Tool(String::new()),
+        Past::Tool(String::new()),
         Past::Speech("I read three files.".into(), Some(100)),
-        Past::Tool,
+        Past::Tool(String::new()),
         Past::Speech("And fixed one.".into(), Some(160)),
         Past::TurnEnded,
         // A turn of tools with no word at its end.
-        Past::Tool,
-        Past::Tool,
+        Past::Tool(String::new()),
+        Past::Tool(String::new()),
         Past::TurnEnded,
         // A turn with no tool.
         Past::Speech("Hello.".into(), None),
         Past::TurnEnded,
         // Tools still running when the file ends.
-        Past::Tool,
+        Past::Tool(String::new()),
     ];
     let items = backfill(7, 3, "moss", None, &past, PER_SESSION);
     let lines: Vec<(&str, Option<i64>, bool)> = items
@@ -155,9 +155,31 @@ fn the_past_of_a_session_is_its_messages_and_one_line_for_the_tools_of_a_turn() 
     assert!(items.iter().all(|item| (item.cub, item.owner) == (7, 3)));
     assert_eq!(items[0].plain, "Used 3 tools.");
     assert_eq!(items[1].plain, "", "speech is plain already");
+    let unnamed = vec![String::new(); 14];
     assert_eq!(
-        tools_line("a very long name indeed", 14).0,
+        tools_line("a very long name indeed", &unnamed).0,
         "A VERY LONG… used 14 tools."
+    );
+    // The tools are named: the first used first, each once with how many
+    // times, and no more than a few of them.
+    let named = |tools: &[&str]| {
+        let tools: Vec<String> = tools.iter().map(|tool| (*tool).to_owned()).collect();
+        tools_line("moss", &tools)
+    };
+    assert_eq!(
+        named(&["Read", "Edit", "Read", "Bash", "Read"]),
+        (
+            "MOSS used 5 tools: Read x3, Edit, Bash.".to_owned(),
+            "Used 5 tools: Read x3, Edit, Bash.".to_owned()
+        )
+    );
+    assert_eq!(
+        named(&["Bash"]),
+        ("MOSS used Bash.".to_owned(), "Used Bash.".to_owned())
+    );
+    assert_eq!(
+        named(&["Read", "Edit", "Bash", "Grep", "Glob"]).0,
+        "MOSS used 5 tools: Read, Edit, Bash, \u{2026}."
     );
     // Only the last are kept.
     let last = backfill(7, 3, "moss", None, &past, 2);
@@ -171,14 +193,17 @@ fn the_past_of_a_session_is_its_messages_and_one_line_for_the_tools_of_a_turn() 
         3,
         "m",
         None,
-        &[Past::Tool, Past::Speech(" \n".into(), Some(5))],
+        &[
+            Past::Tool(String::new()),
+            Past::Speech(" \n".into(), Some(5)),
+        ],
         9,
     );
     assert_eq!(blank.len(), 1);
     // A long session is one line a turn, not one a tool.
     let mut long = Vec::new();
     for _ in 0..300 {
-        long.extend(std::iter::repeat_n(Past::Tool, 12));
+        long.extend(std::iter::repeat_n(Past::Tool(String::new()), 12));
         long.push(Past::Speech("ok".into(), Some(1)));
         long.push(Past::TurnEnded);
     }
@@ -294,7 +319,7 @@ fn a_text_is_wrapped_at_its_breaks_at_spaces_and_inside_what_is_too_long() {
 }
 
 #[test]
-fn entries_are_laid_out_under_a_heading_for_each_lion_and_each_kind() {
+fn entries_are_laid_out_under_a_heading_for_each_lion() {
     let mut feed = Feed::new();
     feed.push(told(1, "moss", "MOSS used READ!", 1000), T0);
     feed.push(told(1, "moss", "MOSS is typing furiously.", 1040), T0);
@@ -312,9 +337,7 @@ fn entries_are_laid_out_under_a_heading_for_each_lion_and_each_kind() {
     let kinds: Vec<String> = rows
         .iter()
         .map(|row| match &row.kind {
-            RowKind::Heading {
-                name, time, speech, ..
-            } => format!("[{name}{} {time}]", if *speech { " said" } else { "" }),
+            RowKind::Heading { name, time, .. } => format!("[{name} {time}]"),
             RowKind::Gap => "-".to_owned(),
             _ => row.text.clone(),
         })
@@ -322,25 +345,58 @@ fn entries_are_laid_out_under_a_heading_for_each_lion_and_each_kind() {
     assert_eq!(
         kinds,
         vec![
+            // What a lion did and what it said, one after the other, are
+            // under one heading.
+            // The heading names the lion: its lines do not say it again.
             "[MOSS 5m]",
-            "MOSS used READ!",
-            "MOSS is typing furiously.",
-            "-",
-            "[MOSS said 4m]",
+            "used READ!",
+            "is typing furiously.",
             "Done.",
             "-",
             "[FERN 4m]",
-            "FERN joined the pride.",
+            "joined the pride.",
             "-",
             // The same lion, much later: a heading of its own.
             "[FERN 1m]",
-            "FERN is done.",
+            "is done.",
         ]
+    );
+    // A name is whole in its heading, however long, and gone from the
+    // lines under it, every row of them; a line about somebody else, or
+    // that begins with something else, is as it was.
+    let long = "Kanban de tareas para el relay";
+    let mut named = Feed::new();
+    named.push(
+        told(
+            1,
+            long,
+            "KANBAN DE T\u{2026} is done.\nKANBAN DE T\u{2026} wants a new order.",
+            1,
+        ),
+        T0,
+    );
+    named.push(told(1, long, "EXPLORE came back with a report.", 2), T0);
+    let long_rows = lay(&named, &show(40));
+    assert!(matches!(
+        &long_rows[0].kind,
+        RowKind::Heading { name, .. } if name == "KANBAN DE TAREAS PARA EL RELAY"
+    ));
+    assert_eq!(
+        body(&long_rows),
+        [
+            "is done.",
+            "wants a new order.",
+            "EXPLORE came back with a report."
+        ]
+    );
+    assert_eq!(
+        crate::feed::unnamed("MOSS used READ!", "fern"),
+        "MOSS used READ!"
     );
     // Every row knows its entry.
     let ids: Vec<u64> = feed.entries().map(|entry| entry.id).collect();
     assert_eq!(rows[1].entry, ids[0]);
-    assert_eq!(rows[5].entry, ids[2]);
+    assert_eq!(rows[3].entry, ids[2]);
     // With no time said, a heading has none.
     let rows = lay(&feed, &show(30));
     assert!(rows.iter().all(|row| match &row.kind {
@@ -415,8 +471,8 @@ fn the_feed_is_narrowed_to_a_lion_and_its_little_ones() {
             },
         )
     };
-    assert_eq!(body(&only(1)), ["MOSS sent out EXPLORE!", "Found it."]);
-    assert_eq!(body(&only(2)), ["FERN is done."]);
+    assert_eq!(body(&only(1)), ["sent out EXPLORE!", "Found it."]);
+    assert_eq!(body(&only(2)), ["is done."]);
     // The little one alone is itself.
     assert_eq!(body(&only(9)), ["Found it."]);
     assert!(only(5).is_empty());
@@ -478,7 +534,8 @@ fn the_newest_line_of_the_narrator_is_typed_a_few_characters_a_tick() {
             ..Show::default()
         },
     );
-    assert_eq!(body(&rows), ["MOSS f"]);
+    // The name is the heading's: what is typed under it is what follows.
+    assert_eq!(body(&rows), ["fell a"]);
     // Typed, it is whole, and nothing is due.
     let done = born + TICK * 6;
     assert_eq!((feed.typing(done), feed.next_typed(done)), (None, None));

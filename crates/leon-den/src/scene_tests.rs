@@ -449,8 +449,18 @@ fn the_feed_shows_its_newest_rows_each_under_the_lion_that_it_is_about() {
         .iter()
         .any(|text| text.starts_with('+') && text.ends_with("more rows")));
     assert!(!shown.contains(&"Message 0."), "the oldest is above");
-    // Its heading: the name as the narrator writes it, "said", the time.
-    assert!(shown.contains(&"FERN") && shown.contains(&"said") && shown.contains(&"now"));
+    // Its heading: the name in capitals and the time.
+    assert!(shown.contains(&"FERN") && shown.contains(&"now"));
+    // What the agent said is what is read first: the narrator's lines are
+    // the muted ones.
+    let colour = |text: &str| scene.texts.iter().find(|t| t.text == text).unwrap().color;
+    assert_eq!(colour("Message 11."), p.text);
+    let told: Vec<_> = scene
+        .texts
+        .iter()
+        .filter(|t| t.text.starts_with("used ") || t.text.starts_with("is "))
+        .collect();
+    assert!(!told.is_empty() && told.iter().all(|t| t.color == p.text_muted));
     // The swatch of a heading is the lion's mane.
     let tint = crate::testing::cub(2, "fern", CubState::Idle).species.tint;
     assert!(scene
@@ -611,11 +621,19 @@ fn with_the_narrator_off_its_lines_are_plain_and_the_agents_words_stay() {
         at(10),
     );
     den.speak(1, "moss", "All 147 tests pass.", None, at(20));
-    den.remember(2, "fern", &[Past::Tool, Past::Tool, Past::TurnEnded]);
+    den.remember(
+        2,
+        "fern",
+        &[
+            Past::Tool(String::new()),
+            Past::Tool(String::new()),
+            Past::TurnEnded,
+        ],
+    );
     let voiced = build(&den, &den.frame(at(2000)), &l, &p, None);
     let shown = texts(&voiced);
-    assert!(shown.contains(&"MOSS used CARGO TEST!"), "{shown:?}");
-    assert!(shown.contains(&"FERN used 2 tools."));
+    assert!(shown.contains(&"used CARGO TEST!"), "{shown:?}");
+    assert!(shown.contains(&"used 2 tools."));
     den.set_plain_status(true);
     let plain = build(&den, &den.frame(at(2000)), &l, &p, None);
     let shown = texts(&plain);
@@ -726,7 +744,10 @@ fn no_size_of_view_and_no_text_of_a_session_makes_the_scene_panic() {
         den.remember(
             2,
             text,
-            &[Past::Tool, Past::Speech((*text).to_owned(), None)],
+            &[
+                Past::Tool(String::new()),
+                Past::Speech((*text).to_owned(), None),
+            ],
         );
         let note = vec![(*text).to_owned(), text.repeat(9)];
         for selected in [None, Some(1), Some(2), Some(900), Some(12_345)] {
@@ -884,6 +905,78 @@ fn the_truth_card_groups_what_the_host_says_and_what_is_asked_stands_out() {
     .map(|text| scene.texts.iter().position(|t| t.text == *text).unwrap())
     .collect();
     assert!(order.windows(2).all(|pair| pair[0] < pair[1]));
+}
+
+#[test]
+fn the_truth_card_says_where_the_agent_left_off_before_the_facts_and_rules_part_the_groups() {
+    let l = layout(1600, 1000, 1., 2);
+    let mut den = den(&l);
+    let p = palette(true);
+    den.select(Some(2));
+    let words = "The migration is written and its tests pass. Two callers still use the old \
+                 name: say the word and they are renamed too.";
+    den.set_notes(
+        [(
+            2,
+            vec![
+                Note::rule(),
+                Note::heading("LAST SAID"),
+                Note::said(words),
+                Note::rule(),
+                Note::heading("YOU ASKED"),
+                Note::plain("rename the column"),
+                Note::rule(),
+                Note::plain("Claude Code \u{b7} opus"),
+                // A heading and a rule with nothing under them say nothing.
+                Note::rule(),
+                Note::heading("EMPTY"),
+            ],
+        )]
+        .into(),
+    );
+    let scene = build(&den, &den.frame(at(400)), &l, &p, None);
+    let find = |text: &str| scene.texts.iter().find(|t| t.text == text).unwrap();
+    // What it said is in the colour of what is read, and all of it is there.
+    let said: Vec<&crate::scene::Text> = scene
+        .texts
+        .iter()
+        .filter(|t| words.contains(t.text.as_str()) && t.text.len() > 12)
+        .collect();
+    assert!(said.len() >= 2, "it takes the rows it needs");
+    assert!(said.iter().all(|t| t.color == p.text && !t.bold));
+    assert_eq!(find("rename the column").color, p.text_muted);
+    assert_eq!(find("Claude Code \u{b7} opus").color, p.text_muted);
+    assert!(!scene.texts.iter().any(|t| t.text == "EMPTY"));
+    // Top to bottom: the state, what it said, what was asked, the facts.
+    let ys: Vec<i32> = [
+        "Needs your permission",
+        "LAST SAID",
+        "YOU ASKED",
+        "rename the column",
+        "Claude Code \u{b7} opus",
+    ]
+    .iter()
+    .map(|text| find(text).y)
+    .collect();
+    assert!(ys.windows(2).all(|pair| pair[0] < pair[1]), "{ys:?}");
+    // A rule over each group: three of them, across the card, each between
+    // the rows it parts.
+    let left = find("LAST SAID").x;
+    let rules: Vec<i32> = scene
+        .quads
+        .iter()
+        .filter(|quad| {
+            quad.color == p.rule
+                && quad.rect.h == l.px(1.)
+                && quad.rect.x < left
+                && quad.rect.x + quad.rect.w > left
+                && quad.rect.y > ys[0]
+                && quad.rect.y < ys[4]
+        })
+        .map(|quad| quad.rect.y)
+        .collect();
+    assert_eq!(rules.len(), 3, "{rules:?}");
+    assert!(rules[0] < ys[1] && rules[1] < ys[2] && rules[1] > ys[1] && rules[2] > ys[3]);
 }
 
 #[test]

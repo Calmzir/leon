@@ -45,7 +45,11 @@ fn write(out: &mut Bitmap, x: i32, y: i32, text: &str, color: [u8; 4]) {
     }
 }
 
-const CAST: [(&str, CubState); 9] = [
+/// The name of the lion nothing but its terminal and its history is known
+/// of: the last of the cast.
+const MYSTERY: &str = "OC | Estrategia de blog y posicionamiento para ADE";
+
+const CAST: [(&str, CubState); 10] = [
     ("whatsapp", CubState::Editing),
     ("leon", CubState::WaitingForUser),
     ("chat movil", CubState::Running),
@@ -55,6 +59,7 @@ const CAST: [(&str, CubState); 9] = [
     ("omarchy", CubState::Reading),
     ("opcion", CubState::WaitingForUser),
     ("mirada", CubState::Asleep),
+    (MYSTERY, CubState::WaitingForUser),
 ];
 
 fn cast(count: usize, dark: bool) -> Vec<Cub> {
@@ -71,6 +76,7 @@ fn cast(count: usize, dark: bool) -> Vec<Cub> {
             state: *state,
             level: index as u32 * 4 + 2,
             detail: match state {
+                _ if *name == MYSTERY => None,
                 CubState::NeedsPermission => Some(
                     "Bash has no result and the terminal is quiet: probably a permission prompt"
                         .to_owned(),
@@ -79,7 +85,7 @@ fn cast(count: usize, dark: bool) -> Vec<Cub> {
                 _ => Some("crates/app/src/ui/den.rs".to_owned()),
             },
             parent: None,
-            mystery: false,
+            mystery: *name == MYSTERY,
         })
         .collect()
 }
@@ -87,20 +93,46 @@ fn cast(count: usize, dark: bool) -> Vec<Cub> {
 /// What a host says of a session that works.
 fn summary() -> Vec<Note> {
     vec![
-        Note::heading("CONVERSATION"),
-        Note::plain("You first said: make the Den follow the brand and the theme"),
-        Note::plain("You last said: the default office needs to be bigger"),
-        Note::plain("Last said: The office is 20 by 15 tiles now, with twelve seats."),
-        Note::plain("7 of your messages, 212 in all"),
-        Note::plain("1 message queued for its prompt"),
-        Note::heading("SESSION"),
-        Note::plain("Claude Code, claude-opus-5-5"),
-        Note::plain("In leon, on feat/den-lion-actions"),
+        Note::rule(),
+        Note::heading("LAST SAID"),
+        Note::said(
+            "The office is 20 by 15 tiles now, with twelve seats. The two racks moved to the \
+             north wall so the entrance line has room. Tests pass; the README still shows the \
+             old room: shall I retake the pictures?",
+        ),
+        Note::rule(),
+        Note::heading("YOU ASKED"),
+        Note::plain("the default office needs to be bigger"),
+        Note::rule(),
+        Note::plain("Claude Code \u{b7} claude-opus-5-5"),
+        Note::plain("leon \u{b7} feat/den-lion-actions"),
         Note::plain("Title: The Den in 2.5D"),
-        Note::plain("Running for 2 h 05 min"),
-        Note::plain("164 tools used, 3 failed"),
+        Note::plain("212 messages, 7 yours \u{b7} up 2 h 05 min"),
+        Note::plain("3 of 164 tools failed"),
         Note::plain("Context: 84k of 200k tokens (42%)"),
         Note::plain("1 sub-agent out"),
+        Note::plain("1 message queued for its prompt"),
+    ]
+}
+
+/// What a host says of a session whose transcript it does not follow: the
+/// end of its history.
+fn recalled() -> Vec<Note> {
+    vec![
+        Note::rule(),
+        Note::heading("LAST IN HISTORY \u{b7} 12 min ago"),
+        Note::said(
+            "The plan has four posts: what an ADE is, the comparison, two case studies and \
+             the launch post. The outline of the first is in docs/blog/01.md. Which one do \
+             you want written first?",
+        ),
+        Note::rule(),
+        Note::heading("YOU ASKED"),
+        Note::plain("propose a blog strategy to rank for ADE"),
+        Note::rule(),
+        Note::plain("opencode \u{b7} deepseek-v4.1-flash"),
+        Note::plain("leon-web \u{b7} feat/blog"),
+        Note::plain("162 messages \u{b7} up 3 d 20 h"),
     ]
 }
 
@@ -334,6 +366,17 @@ fn main() {
             lions: 9,
             select: Some(1),
             notes: summary(),
+            home: 0,
+            keys: false,
+        },
+        // The card of a lion with no transcript: what its history last holds.
+        Shot {
+            name: "card-history",
+            size: large,
+            dark: true,
+            lions: 10,
+            select: Some(10),
+            notes: recalled(),
             home: 0,
             keys: false,
         },

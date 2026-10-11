@@ -3,7 +3,8 @@
 //! [`narrate`] turns a [`Happening`] into a [`Line`] in the voice of
 //! `brand/voice.md`: the name in capitals, one fact, at most two rows of
 //! [`ROW_CHARS`] characters. It never invents: a line exists only for what
-//! really happened, the "super effective" one only for a command that passed,
+//! really happened, the "super effective" one only for a command that passed
+//! (and it names the command, so the line stands on its own in the feed),
 //! and a session nothing is known of gets a line that says so. The choice
 //! among the templates of a fact is a function of the cub's name and a seed,
 //! so the same session and the same seed always read the same, and a caller
@@ -83,15 +84,20 @@ impl Line {
     }
 }
 
-/// A name as the narrator writes it: in capitals, cut to [`NAME_CHARS`].
-pub fn shout(name: &str) -> String {
-    let name = name.trim();
-    let upper: String = name.to_uppercase();
-    let upper = if upper.is_empty() {
+/// A name in capitals and whole: what heads a lion's entries in the feed,
+/// where the row and not the text box says how much of it fits.
+pub fn loud(name: &str) -> String {
+    let upper = name.trim().to_uppercase();
+    if upper.is_empty() {
         "A CUB".to_owned()
     } else {
         upper
-    };
+    }
+}
+
+/// A name as the narrator writes it: in capitals, cut to [`NAME_CHARS`].
+pub fn shout(name: &str) -> String {
+    let upper = loud(name);
     if upper.chars().count() <= NAME_CHARS {
         upper
     } else {
@@ -199,6 +205,27 @@ fn pick(count: u64, name: &str, kind: u64, seed: u64) -> u64 {
     (scramble(hash) % count + seed % count) % count
 }
 
+/// What ended, as the narrator names it: the move of a command
+/// ([`move_name`]), else the tool in capitals. `None` when neither is known.
+fn ended(kind: ToolKind, tool: &str, detail: Option<&str>) -> Option<String> {
+    let detail = detail.map(str::trim).filter(|detail| !detail.is_empty());
+    if let (ToolKind::Run, Some(command)) = (kind, detail) {
+        return Some(move_name(command));
+    }
+    let tool = tool.trim();
+    if tool.is_empty() {
+        return None;
+    }
+    let name = tool.to_uppercase();
+    Some(if name.chars().count() > 18 {
+        let mut cut: String = name.chars().take(17).collect();
+        cut.push('…');
+        cut
+    } else {
+        name
+    })
+}
+
 fn plain(rows: Option<Vec<String>>) -> Option<Line> {
     rows.map(|rows| Line {
         rows,
@@ -261,11 +288,24 @@ pub fn narrate(happening: &Happening, seed: u64) -> Option<Line> {
                 }
             })
         }
-        Event::ToolFinished { ok: false, .. } => plain(wrap("It's not very effective...")),
+        Event::ToolFinished {
+            kind,
+            tool,
+            detail,
+            ok: false,
+        } => plain(wrap(&match ended(*kind, tool, detail.as_deref()) {
+            Some(what) => format!("{what} missed.\nIt's not very effective..."),
+            None => "It's not very effective...".to_owned(),
+        })),
         Event::ToolFinished {
             kind: ToolKind::Run,
+            tool,
+            detail,
             ok: true,
-        } => plain(wrap("It's super effective!")),
+        } => plain(wrap(&match ended(ToolKind::Run, tool, detail.as_deref()) {
+            Some(what) => format!("{what} landed.\nIt's super effective!"),
+            None => "It's super effective!".to_owned(),
+        })),
         Event::ToolFinished { .. } => None,
         Event::SentOut { little } => {
             let little = shout(little);
@@ -324,11 +364,25 @@ pub fn plainly(happening: &Happening) -> Option<String> {
             (ToolKind::Other, Some(d)) => format!("Using {}: {d}", tool.trim()),
             (ToolKind::Other, None) => format!("Using {}.", tool.trim()),
         },
-        Event::ToolFinished { ok: false, .. } => "It failed.".to_owned(),
+        Event::ToolFinished {
+            kind,
+            tool,
+            detail: subject,
+            ok: false,
+        } => match (kind, detail(subject), tool.trim()) {
+            (ToolKind::Run, Some(d), _) => format!("Failed: `{d}`"),
+            (_, _, "") => "It failed.".to_owned(),
+            (_, _, tool) => format!("{tool} failed."),
+        },
         Event::ToolFinished {
             kind: ToolKind::Run,
+            detail: subject,
             ok: true,
-        } => "The command passed.".to_owned(),
+            ..
+        } => match detail(subject) {
+            Some(d) => format!("Passed: `{d}`"),
+            None => "The command passed.".to_owned(),
+        },
         Event::ToolFinished { .. } => return None,
         Event::SentOut { little } => format!("Started the sub-agent {little}."),
         Event::CameBack { little } => format!("The sub-agent {little} finished."),
