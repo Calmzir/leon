@@ -2,7 +2,7 @@
   "expo": {
     "name": "Leon",
     "slug": "leon",
-    "version": "0.5.0",
+    "version": "0.8.0",
     "scheme": "leon",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
@@ -10,9 +10,10 @@
     "backgroundColor": "#0A0A0A",
     "ios": {
       "bundleIdentifier": "dev.zavu.leon",
-      "supportsTablet": true,
+      "supportsTablet": false,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "Leon connects to a relay on your own network when you pair with one."
       }
     },
     "android": {
