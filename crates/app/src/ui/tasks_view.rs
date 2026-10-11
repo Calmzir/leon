@@ -47,7 +47,6 @@ use super::task_detail::{work_phrase, Work};
 use super::widgets::{activity_dot, key_cap, mark, mono, Lion};
 use crate::engine::Op;
 use crate::icons::{agent_icon, icon, IconName};
-use crate::keys::Command;
 use crate::task_board::{self, Action, Board, Which, COLUMNS, PER_COLUMN};
 use crate::theme::{metrics, px, Palette};
 
@@ -91,8 +90,10 @@ pub struct TasksUi {
     pub drop: Option<DropAt>,
     /// The card being dragged.
     pub dragging: Option<String>,
-    /// The details of a card, open beside the columns.
+    /// The details of a card, over the right edge of the board.
     pub detail: Option<super::task_detail::DetailUi>,
+    /// The panel for a new task, in the same place.
+    pub create: Option<super::task_create::CreateUi>,
     /// The loop that reads again while the board is open.
     refresher: Option<Task<()>>,
 }
@@ -120,6 +121,7 @@ impl Default for TasksUi {
             drop: None,
             dragging: None,
             detail: None,
+            create: None,
             refresher: None,
         }
     }
@@ -256,6 +258,7 @@ impl Shell {
         self.tasks_ui.drop = None;
         self.tasks_ui.dragging = None;
         self.tasks_ui.detail = None;
+        self.tasks_ui.create = None;
         self.home.nav = Some(Nav::Tasks);
         self.pane = Pane::Main;
         self.tasks_reload();
@@ -272,6 +275,7 @@ impl Shell {
         // What was being typed is saved, not lost.
         self.save_detail(cx);
         self.tasks_ui.detail = None;
+        self.tasks_ui.create = None;
         self.tasks_ui.refresher = None;
         self.tasks_ui.follow_title = None;
         self.tasks_ui.drop = None;
@@ -467,6 +471,10 @@ impl Shell {
             root,
             title: title.to_owned(),
             status,
+            body: String::new(),
+            priority: None,
+            assignee: None,
+            labels: Vec::new(),
         });
         cx.notify();
     }
@@ -488,12 +496,19 @@ impl Shell {
                 self.tasks_ui.drop = None;
                 self.tasks_ui.dragging = None;
                 cx.notify();
+            } else if self.create_open() {
+                self.close_create(window, cx);
             } else if self.detail_open() {
                 self.close_detail(window, cx);
             } else {
                 self.close_tasks(window, cx);
             }
             return true;
+        }
+        if self.create_open() {
+            // The panel for a new task is typing: its own keys, and nothing
+            // of the board's.
+            return self.create_key(stroke, window, cx);
         }
         if self.detail_open() && self.detail_key(stroke, window, cx) {
             return true;
@@ -521,7 +536,7 @@ impl Shell {
                 }
             }
             Action::Priority => self.tasks_raise_priority(),
-            Action::New => self.tasks_ask_for_a_title(window, cx),
+            Action::New => self.open_create(None, window, cx),
             Action::Start => self.tasks_start(window, cx),
             Action::Scope => {
                 let which = if self.tasks_ui.want_global {
@@ -563,11 +578,6 @@ impl Shell {
         };
         let id = card.id.clone();
         self.engine.submit(Op::UpdateTask { id, patch });
-    }
-
-    fn tasks_ask_for_a_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.tasks_ui.return_from_palette = true;
-        self.begin_flow(Command::NewTask, window, cx);
     }
 
     /// Notes a drag passing over a place of the board: what releasing the
@@ -640,23 +650,26 @@ impl Shell {
             .flex()
             .flex_col()
             .child(self.tasks_header(c, cx));
-        root = if board.is_empty() && ui.error.is_none() {
-            root.child(self.tasks_empty(c, cx))
+        // The columns (or the lion, on an empty board) and, over their right
+        // edge, the details of a card or the panel of a new task: the
+        // columns keep their width, nothing is pushed.
+        let main = if board.is_empty() && ui.error.is_none() {
+            self.tasks_empty(c, cx).into_any_element()
         } else {
-            // The columns, and over their right edge the details of a card:
-            // the columns keep their width, nothing is pushed.
-            root.child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .relative()
-                    .overflow_hidden()
-                    .flex()
-                    .child(self.tasks_lanes(c, cx))
-                    .children(self.render_detail(c, cx)),
-            )
+            self.tasks_lanes(c, cx).into_any_element()
         };
+        root = root.child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .relative()
+                .overflow_hidden()
+                .flex()
+                .child(main)
+                .children(self.render_detail(c, cx))
+                .children(self.render_create(c, cx)),
+        );
         root.child(self.tasks_footer(c)).into_any_element()
     }
 
@@ -772,7 +785,7 @@ impl Shell {
             .child(chips)
             .child(
                 super::updates_view::pill("tasks-new", "New task  n", c).on_click(
-                    cx.listener(|this, _, window, cx| this.tasks_ask_for_a_title(window, cx)),
+                    cx.listener(|this, _, window, cx| this.open_create(None, window, cx)),
                 ),
             )
     }
@@ -930,8 +943,9 @@ impl Shell {
                                     .hover(move |style| style.bg(c.surface_2))
                                     .child(icon(IconName::Plus, px(12.), c.text_muted))
                                     .on_click(cx.listener(move |this, _, window, cx| {
+                                        // A new task of this column.
                                         this.tasks_ui.board.select(index, usize::MAX);
-                                        this.tasks_ask_for_a_title(window, cx);
+                                        this.open_create(Some(COLUMNS[index]), window, cx);
                                     })),
                             ),
                     )

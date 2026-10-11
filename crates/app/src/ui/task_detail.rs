@@ -167,12 +167,13 @@ impl Shell {
     /// text, not commands.
     pub(super) fn tasks_typing(&self, window: &Window, cx: &gpui_kit::App) -> bool {
         self.tasks_open()
-            && self.tasks_ui.detail.as_ref().is_some_and(|detail| {
-                detail.title.read(cx).focus_handle(cx).is_focused(window)
-                    || detail.body.read(cx).focus_handle(cx).is_focused(window)
-                    || detail.assignee.read(cx).focus_handle(cx).is_focused(window)
-                    || detail.label.read(cx).focus_handle(cx).is_focused(window)
-            })
+            && (self.create_typing(window, cx)
+                || self.tasks_ui.detail.as_ref().is_some_and(|detail| {
+                    detail.title.read(cx).focus_handle(cx).is_focused(window)
+                        || detail.body.read(cx).focus_handle(cx).is_focused(window)
+                        || detail.assignee.read(cx).focus_handle(cx).is_focused(window)
+                        || detail.label.read(cx).focus_handle(cx).is_focused(window)
+                }))
     }
 
     /// Opens the drawer on the card under the cursor, or closes it.
@@ -189,6 +190,7 @@ impl Shell {
         let Some(task) = self.tasks_ui.board.selected().cloned() else {
             return;
         };
+        self.tasks_ui.create = None;
         let title = cx.new(|cx| InputState::new(window, cx).placeholder("What is to be done"));
         let body = cx.new(|cx| {
             TextareaState::new(window, cx)

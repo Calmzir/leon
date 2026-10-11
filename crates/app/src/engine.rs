@@ -231,6 +231,14 @@ pub enum Op {
         title: String,
         /// The column it starts in.
         status: leon_core::TaskStatus,
+        /// What it is about; may be empty.
+        body: String,
+        /// How much it matters; none when absent.
+        priority: Option<leon_core::TaskPriority>,
+        /// Who is to do it.
+        assignee: Option<String>,
+        /// Its labels.
+        labels: Vec<String>,
     },
     /// Move a task to a column, above `before` when that is given.
     MoveTask {
@@ -1746,7 +1754,25 @@ impl Engine {
                 root,
                 title,
                 status,
-            } => self.add_task(root.as_deref(), &title, status).map(Some),
+                body,
+                priority,
+                assignee,
+                labels,
+            } => {
+                let mut new = leon_core::NewTask::titled(
+                    match root {
+                        Some(root) => leon_core::MemoryScope::project(root),
+                        None => leon_core::MemoryScope::Global,
+                    },
+                    title,
+                );
+                new.status = Some(status);
+                new.body = body;
+                new.priority = priority;
+                new.assignee = assignee;
+                new.labels = labels;
+                self.add_task(&new).map(Some)
+            }
             Op::MoveTask { id, status, before } => {
                 self.move_task(&id, status, before.as_deref()).map(Some)
             }
@@ -3056,22 +3082,11 @@ impl Engine {
     }
 
     /// Creates a task on a board, or says which open task has its title.
-    fn add_task(
-        &self,
-        root: Option<&str>,
-        title: &str,
-        status: leon_core::TaskStatus,
-    ) -> Result<String, EngineError> {
-        let scope = match root {
-            Some(root) => leon_core::MemoryScope::project(root),
-            None => leon_core::MemoryScope::Global,
-        };
-        let mut new = leon_core::NewTask::titled(scope, title);
-        new.status = Some(status);
+    fn add_task(&self, new: &leon_core::NewTask) -> Result<String, EngineError> {
         let saved = self
             .inner
             .store
-            .add_task(&new, crate::memory::now_millis())?;
+            .add_task(new, crate::memory::now_millis())?;
         Ok(match saved {
             leon_core::SavedTask::New(task) => {
                 format!(
@@ -6103,6 +6118,10 @@ branch refs/heads/feature/login
                 root: root.clone(),
                 title: "Rotate the key".into(),
                 status: leon_core::TaskStatus::Backlog,
+                body: "Before the end of the month.".into(),
+                priority: Some(leon_core::TaskPriority::High),
+                assignee: Some("ana".into()),
+                labels: vec!["security".into()],
             })
             .await;
         assert!(
@@ -6112,6 +6131,11 @@ branch refs/heads/feature/login
         );
         let first = all(&rig).remove(0);
         assert_eq!(first.status, leon_core::TaskStatus::Backlog);
+        // What the creation panel gives is kept.
+        assert_eq!(first.body, "Before the end of the month.");
+        assert_eq!(first.priority, leon_core::TaskPriority::High);
+        assert_eq!(first.assignee.as_deref(), Some("ana"));
+        assert_eq!(first.labels, ["security"]);
 
         // The same title again is not a second task, and says so.
         rig.engine
@@ -6119,6 +6143,10 @@ branch refs/heads/feature/login
                 root: root.clone(),
                 title: "rotate the KEY".into(),
                 status: leon_core::TaskStatus::Todo,
+                body: String::new(),
+                priority: None,
+                assignee: None,
+                labels: Vec::new(),
             })
             .await;
         assert!(status(&rig.engine).text.starts_with("Already on the board"));
@@ -6209,6 +6237,10 @@ branch refs/heads/feature/login
                 root: None,
                 title: "Renew the domain".into(),
                 status: leon_core::TaskStatus::Todo,
+                body: String::new(),
+                priority: None,
+                assignee: None,
+                labels: Vec::new(),
             })
             .await;
         let global = rig

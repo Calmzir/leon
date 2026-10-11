@@ -2987,6 +2987,7 @@ impl Shell {
             C::Settings => self.open_settings(window, cx),
             C::ShowUsage => self.toggle_usage(window, cx),
             C::ShowTasks => self.toggle_tasks(window, cx),
+            C::NewTask if self.tasks_open() => self.open_create(None, window, cx),
             C::NewTask => self.begin_flow(command, window, cx),
             C::StartTask => {
                 if self.tasks_open() && self.tasks_ui.board.selected().is_some() {

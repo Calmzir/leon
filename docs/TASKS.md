@@ -79,7 +79,7 @@ nothing. Dropping a card where it already is changes nothing.
 | `Shift` + those | Carry the card: to the bottom of the next column, or one place up or down in its own |
 | `w` or `Enter` | Create the card's worktree (see below), or open the one it has |
 | `e` | Open the card's details beside the columns, or close them |
-| `n` | Ask for the title of a new task, in the cursor's column |
+| `n` | Open the panel for a new task, in the cursor's column, with the title ready to type |
 | `d` | Finish the card |
 | `p` | Raise its priority: none, low, medium, high, urgent, none |
 | `g` | Switch between the project's board and the global one |
@@ -89,6 +89,18 @@ A click on a card opens its details (below). Every change goes through the engin
 does, so the status line says what was done (`Moved 1a2b3c4d to doing: ...`).
 The open board reads the store every second and a half because an agent writes
 from another process; a card that moved is followed by the cursor.
+
+### A new task
+
+`n`, **New task** in the header, the **+** of a column and the palette's
+**New task…** (while the board is open) open the same panel as the details of a
+card, over the right edge of the board, **with the title field already holding
+the keyboard**: type and press `Enter`. The panel also takes the description,
+the column it starts in (the one it was asked from), the priority, who it is
+for and the labels, so a task is made whole. `Enter` in the title or the
+assignee, `Cmd+Enter` / `Ctrl+Enter` anywhere and **Create task** make it;
+`Enter` in the labels adds one; `Esc` throws it away. A title left empty is
+refused where it is typed. The cursor goes to the new card when it shows up.
 
 ### The details of a card
 

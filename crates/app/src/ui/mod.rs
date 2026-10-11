@@ -63,6 +63,7 @@ mod shell;
 mod shelving;
 mod sidebar;
 mod steps;
+mod task_create;
 mod task_detail;
 mod task_work;
 mod tasks_view;

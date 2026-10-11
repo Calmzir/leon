@@ -25,6 +25,11 @@
   the project. **New task…** in the palette creates one from anywhere, and
   what an agent writes from another process appears within a couple of
   seconds.
+* A new task is made in the same panel as the details, with the title field
+  already holding the keyboard: `n`, **New task**, the **+** of a column and
+  the palette's **New task…** open it, and it takes the description, the
+  column, the priority, the assignee and the labels before the task exists.
+  `Esc` throws it away.
 * The details of a card (a click on it, or `e`): a drawer over
   the right edge of the board (it moves nothing) to read and edit what a card cannot show: the title, a
   description of several lines, who it is for, status and priority, labels and

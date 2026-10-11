@@ -1588,7 +1588,8 @@ the **Tasks** row under Home, `⇧⌘I` (`Ctrl+Shift+Alt+I`), or **Show the task
 board** in the palette. The columns are backlog, todo, doing, review and done.
 Drag a card with the pointer to any place of any column, or use the keys: the
 arrows (or `h` `j` `k` `l`) move the cursor, `Shift` with them carries the card,
-`n` asks for the title of a new task in the cursor's column, `d` finishes the
+`n` (or the **+** of a column, or **New task**) opens the panel for a new task
+with the title ready to type, in the cursor's column, `d` finishes the
 card, `p` raises its priority and `g` switches between the project's board and
 the global one; the chips in the header change the project. What an agent
 writes from another process shows up within a couple of seconds.

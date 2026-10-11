@@ -252,34 +252,203 @@ fn p_raises_the_priority_of_the_card(cx: &mut TestAppContext) {
     assert!(h.status().contains("Priority"), "{}", h.status());
 }
 
+/// Whether a field of the board has the keyboard.
+fn typing(h: &Harness, cx: &mut TestAppContext) -> bool {
+    cx.update_window(h.window.into(), |_, window, cx| {
+        h.shell.read(cx).tasks_typing(window, cx)
+    })
+    .unwrap()
+}
+
+fn create_field(
+    h: &Harness,
+    cx: &mut TestAppContext,
+    pick: impl Fn(
+        &crate::ui::task_create::CreateUi,
+    ) -> gpui_kit::Entity<gpui_kit::component::input::InputState>,
+) -> gpui_kit::Entity<gpui_kit::component::input::InputState> {
+    h.shell(cx, |s| pick(s.tasks_ui.create.as_ref().expect("the panel")))
+}
+
 #[gpui_kit::test]
-fn n_asks_for_a_title_in_the_palette_and_comes_back_to_the_board(cx: &mut TestAppContext) {
+fn n_opens_the_panel_for_a_new_task_with_the_title_ready_to_type(cx: &mut TestAppContext) {
     let h = on_api(cx);
     open_board(&h, cx);
+    written_elsewhere(&h, "Already here", 1, cx);
     // The cursor is in the doing column: the new task starts there.
     h.press("right", cx);
     h.press("n", cx);
-    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::Palette);
+    // The panel, not the palette, and the keyboard is already in the title.
+    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::None);
+    assert!(h.shows("tasks-create", cx));
+    assert!(typing(&h, cx), "the title field has the keyboard");
     h.type_text("Write the migration guide", cx);
     h.press("enter", cx);
+    assert!(!h.shows("tasks-create", cx));
     assert_eq!(h.main_kind(cx), "tasks");
-    assert_eq!(h.shell(cx, |s| s.pane), Pane::Main);
     wait_for_the_board(&h, cx);
     let scope = board_scope(&h, cx);
     let tasks = h
         .store
         .tasks(&scope, &leon_core::TaskFilter::default(), 10)
         .unwrap();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].title, "Write the migration guide");
-    assert_eq!(tasks[0].status, TaskStatus::Doing);
+    let made = tasks
+        .iter()
+        .find(|task| task.title == "Write the migration guide")
+        .expect("the task was made");
+    assert_eq!(made.status, TaskStatus::Doing);
     // The cursor is on the card that was just made, and the keys work again.
     assert_eq!(
         h.shell(cx, |s| s.tasks_ui.board.selected().map(|t| t.title.clone())),
         Some("Write the migration guide".to_owned())
     );
+    assert!(!typing(&h, cx));
     h.press("left", cx);
     assert_eq!(h.shell(cx, |s| s.tasks_ui.board.cursor().0), 1);
+}
+
+#[gpui_kit::test]
+fn the_buttons_open_the_same_panel_in_the_column_they_are_in(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    written_elsewhere(&h, "Seed", 1, cx);
+    // The + of the review column.
+    h.mouse_on("tasks-add-3".to_owned(), gpui_kit::MouseButton::Left, cx);
+    assert!(h.shows("tasks-create", cx));
+    assert!(typing(&h, cx));
+    assert_eq!(
+        h.shell(cx, |s| s.tasks_ui.create.as_ref().map(|c| c.status)),
+        Some(TaskStatus::Review)
+    );
+    h.type_text("Look at the dashboards", cx);
+    h.press("enter", cx);
+    wait_for_the_board(&h, cx);
+    assert_eq!(titles(&h, 3, cx), ["Look at the dashboards"]);
+    // The New task button of the header, from the todo column.
+    h.mouse_on("tasks-new".to_owned(), gpui_kit::MouseButton::Left, cx);
+    assert!(h.shows("tasks-create", cx));
+    assert!(typing(&h, cx));
+}
+
+#[gpui_kit::test]
+fn escape_throws_the_new_task_away_and_an_empty_title_is_refused(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    written_elsewhere(&h, "Seed", 1, cx);
+    h.press("n", cx);
+    // Nothing typed: refused where it is typed, the panel stays.
+    h.press("enter", cx);
+    assert!(h.shows("tasks-create", cx));
+    assert!(h.shows("new-task-error", cx));
+    h.type_text("Never made", cx);
+    h.press("escape", cx);
+    assert!(!h.shows("tasks-create", cx));
+    assert_eq!(
+        h.main_kind(cx),
+        "tasks",
+        "Escape closed the panel, not the board"
+    );
+    wait_for_the_board(&h, cx);
+    let scope = board_scope(&h, cx);
+    assert!(h
+        .store
+        .tasks(&scope, &leon_core::TaskFilter::default(), 10)
+        .unwrap()
+        .iter()
+        .all(|task| task.title != "Never made"));
+}
+
+#[gpui_kit::test]
+fn the_panel_makes_a_task_with_everything_filled_in(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    let h = {
+        VisualTestContext::from_window(h.window.into(), cx)
+            .simulate_resize(gpui_kit::size(px(1400.), px(1000.)));
+        h.settle(cx);
+        h
+    };
+    open_board(&h, cx);
+    written_elsewhere(&h, "Seed", 1, cx);
+    h.press("n", cx);
+    let title = create_field(&h, cx, |c| c.title.clone());
+    set_text(&h, cx, &title, "Rotate the signing key");
+    let body = h.shell(cx, |s| s.tasks_ui.create.as_ref().unwrap().body.clone());
+    cx.update_window(h.window.into(), |_, window, cx| {
+        body.update(cx, |field, cx| {
+            field.set_value(
+                "Expires at the end of the month.\nKeep the old one 24 hours.",
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    let assignee = create_field(&h, cx, |c| c.assignee.clone());
+    set_text(&h, cx, &assignee, "ana");
+    h.mouse_on(
+        "new-status-review".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    h.mouse_on(
+        "new-priority-high".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    // A label is typed and added with Enter, and another is left in the
+    // field: it is not lost.
+    let label = create_field(&h, cx, |c| c.label.clone());
+    set_text(&h, cx, &label, "Security");
+    {
+        use gpui_kit::Focusable as _;
+        cx.update_window(h.window.into(), |_, window, cx| {
+            let handle = label.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
+        })
+        .unwrap();
+    }
+    h.press("enter", cx);
+    set_text(&h, cx, &label, "backend");
+    h.mouse_on(
+        "new-task-create".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_for_the_board(&h, cx);
+    let scope = board_scope(&h, cx);
+    let task = h
+        .store
+        .tasks(&scope, &leon_core::TaskFilter::default(), 10)
+        .unwrap()
+        .into_iter()
+        .find(|task| task.title == "Rotate the signing key")
+        .expect("the task was made");
+    assert_eq!(task.status, TaskStatus::Review);
+    assert_eq!(task.priority, leon_core::TaskPriority::High);
+    assert_eq!(task.assignee.as_deref(), Some("ana"));
+    assert_eq!(task.labels, ["security", "backend"]);
+    assert_eq!(
+        task.body,
+        "Expires at the end of the month.\nKeep the old one 24 hours."
+    );
+}
+
+#[gpui_kit::test]
+fn what_is_typed_in_the_new_task_panel_is_text_and_not_commands(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    let id = written_elsewhere(&h, "Seed", 1, cx);
+    h.press("n", cx);
+    for key in ["d", "p", "g", "w", "e", "?"] {
+        h.press(key, cx);
+    }
+    assert!(h.shows("tasks-create", cx), "still the panel");
+    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::None);
+    assert_eq!(status_of(&h, &id), TaskStatus::Todo);
+    assert!(matches!(
+        h.shell(cx, |s| s.tasks_ui.which.clone()),
+        Which::Project(_)
+    ));
 }
 
 #[gpui_kit::test]
