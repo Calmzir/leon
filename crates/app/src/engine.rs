@@ -241,6 +241,18 @@ pub enum Op {
         /// The task it is placed above.
         before: Option<String>,
     },
+    /// Work was started on a task: a worktree was made for it. Writes the
+    /// branch, the column `doing` and, when given, the assignee, and says so.
+    StartTask {
+        /// The task.
+        id: String,
+        /// The branch of the worktree made for it.
+        branch: String,
+        /// Who codes it, when nobody was given it already.
+        assignee: Option<String>,
+        /// What else is to be said in the line, such as why no setup ran.
+        notice: Option<String>,
+    },
     /// Change a task.
     UpdateTask {
         /// The task.
@@ -1734,6 +1746,14 @@ impl Engine {
                 self.move_task(&id, status, before.as_deref()).map(Some)
             }
             Op::UpdateTask { id, patch } => self.update_task(&id, &patch).map(Some),
+            Op::StartTask {
+                id,
+                branch,
+                assignee,
+                notice,
+            } => self
+                .start_task(&id, &branch, assignee, notice.as_deref())
+                .map(Some),
             Op::RenameProject { project, name } => self.rename_project(&project, &name).map(Some),
             Op::ReorderProjects { machine, ordered } => {
                 self.reorder_projects(&machine, &ordered).map(Some)
@@ -3081,6 +3101,37 @@ impl Engine {
             task.status.as_str(),
             task.title
         ))
+    }
+
+    /// Writes what starting work on a task means: its branch, `doing` and
+    /// the agent that codes it.
+    fn start_task(
+        &self,
+        id: &str,
+        branch: &str,
+        assignee: Option<String>,
+        notice: Option<&str>,
+    ) -> Result<String, EngineError> {
+        let patch = leon_core::TaskPatch {
+            status: Some(leon_core::TaskStatus::Doing),
+            branch: Some(Some(branch.to_owned())),
+            assignee: assignee.map(Some),
+            ..leon_core::TaskPatch::default()
+        };
+        let task = self
+            .inner
+            .store
+            .update_task(id, &patch, crate::memory::now_millis())?;
+        let mut line = format!(
+            "Started work on {} in {branch}: {}",
+            task.short_id(),
+            task.title
+        );
+        if let Some(notice) = notice {
+            line.push(' ');
+            line.push_str(notice);
+        }
+        Ok(line)
     }
 
     /// Changes a task.
@@ -6092,6 +6143,32 @@ branch refs/heads/feature/login
             })
             .await;
         assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+    }
+
+    #[tokio::test]
+    async fn starting_work_on_a_task_writes_its_branch_and_moves_it_to_doing() {
+        let rig = rig(ScriptedRunner::new());
+        let scope = leon_core::MemoryScope::project("/srv/api");
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(scope, "Fix the login"), 1)
+            .unwrap()
+            .into_task();
+        rig.engine
+            .run(Op::StartTask {
+                id: task.id.clone(),
+                branch: "fix-the-login-1a2b3c4d".into(),
+                assignee: Some("claude".into()),
+                notice: Some("No setup was run.".into()),
+            })
+            .await;
+        let line = status(&rig.engine).text;
+        assert!(line.starts_with("Started work on "), "{line}");
+        assert!(line.ends_with("No setup was run."), "{line}");
+        let task = rig.store.task(&task.id).unwrap();
+        assert_eq!(task.status, leon_core::TaskStatus::Doing);
+        assert_eq!(task.branch.as_deref(), Some("fix-the-login-1a2b3c4d"));
+        assert_eq!(task.assignee.as_deref(), Some("claude"));
     }
 
     #[tokio::test]

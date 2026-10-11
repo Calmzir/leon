@@ -26,7 +26,7 @@ use crate::error::{Result, StoreError};
 /// public schema is version 3, so version 4 never existed in the wild and this
 /// order (usage, then relay) is the one every database goes through.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
 ];
 
 const V1: &str = r#"
@@ -527,6 +527,13 @@ WHEN old.title IS NOT new.title OR old.body IS NOT new.body BEGIN
 END;
 "#;
 
+/// Version 21: the branch of the worktree made for a task, when work was
+/// started on it from the board. `NULL` for every task there is, and for any
+/// that has no worktree.
+const V21: &str = r#"
+ALTER TABLE task ADD COLUMN branch TEXT;
+"#;
+
 /// Brings the database up to the latest schema version.
 pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
     let supported = MIGRATIONS.len() as u32;
@@ -978,6 +985,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(found, 1);
+    }
+
+    #[test]
+    fn a_version_20_database_gains_the_branch_of_a_task_and_keeps_its_tasks() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        for (index, sql) in MIGRATIONS[..20].iter().enumerate() {
+            connection.execute_batch(sql).unwrap();
+            connection
+                .pragma_update(None, "user_version", index as u32 + 1)
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO task (id, scope, root, title, status, position, title_hash,
+                                   created_at, updated_at)
+                 VALUES ('t', '/srv/api', '/srv/api', 'Ship it', 'todo', 1, 'h', 1, 1);",
+            )
+            .unwrap();
+        migrate(&mut connection).unwrap();
+        assert_eq!(version(&connection), MIGRATIONS.len() as u32);
+        let branch: Option<String> = connection
+            .query_row("SELECT branch FROM task WHERE id = 't'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(branch, None);
     }
 
     #[test]

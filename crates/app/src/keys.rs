@@ -351,6 +351,8 @@ pub enum Command {
     ShowTasks,
     /// Asks for the title of a new task and puts it on the board.
     NewTask,
+    /// Makes a worktree for the selected task and starts a session in it.
+    StartTask,
     /// The Den: every live agent session as a lion at work, in the main pane.
     ShowDen,
     /// The home: the actions that start things and the sessions at a glance.
@@ -2138,6 +2140,14 @@ pub const BINDINGS: &[Binding] = &[
         true,
     ),
     bind(
+        C::StartTask,
+        "Start work on the task\u{2026}",
+        S::View,
+        W::Anywhere,
+        &[],
+        true,
+    ),
+    bind(
         C::ShowDen,
         "Open the Den",
         S::View,
@@ -2482,7 +2492,7 @@ pub fn keywords(command: Command) -> &'static str {
         C::DeleteDen => "den layout remove discard",
         C::OpenDensFolder => "dens folder directory reveal finder files json export import share",
         C::ShowUsage | C::RefreshUsage => "limits quota rate tokens credits remaining percent reset five hour weekly claude codex opencode",
-        C::ShowTasks | C::NewTask => "tasks board kanban todo issues backlog doing review done cards columns agents github linear create add",
+        C::ShowTasks | C::NewTask | C::StartTask => "tasks worktree session code start work board kanban todo issues backlog doing review done cards columns agents github linear create add",
         C::SettleSession | C::BringBackSession => "shelf archive put away done finished sessions sidebar return restore",
         C::SnoozeSession => "shelf hide later remind wake tomorrow hour sessions sidebar",
         C::Undo => "revert take back last close sleep settle snooze unpin banner",
@@ -2758,6 +2768,7 @@ mod tests {
             C::RefreshUsage,
             C::ShowTasks,
             C::NewTask,
+            C::StartTask,
             C::ShowDen,
             C::GoHome,
             C::EditDen,
@@ -2937,6 +2948,7 @@ mod tests {
                 | C::RefreshUsage
                 | C::ShowTasks
                 | C::NewTask
+                | C::StartTask
                 | C::ShowDen
                 | C::GoHome
                 | C::EditDen

@@ -45,6 +45,8 @@ pub const MAX_LABELS: usize = 10;
 pub const MAX_LABEL_CHARS: usize = 40;
 /// The longest assignee, in characters.
 pub const MAX_ASSIGNEE_CHARS: usize = 64;
+/// The longest branch name, in characters.
+pub const MAX_BRANCH_CHARS: usize = 200;
 /// The most tasks one scope holds.
 pub const MAX_TASKS: usize = 100_000;
 /// The most tasks or hits one call returns, whatever it asks for.
@@ -56,9 +58,9 @@ const SNIPPET_WORDS: u32 = 24;
 /// The columns of a task, in the order [`task_from_row`] reads them.
 const COLUMNS: &str = "t.id, t.scope, t.root, t.title, t.body, t.status, t.priority, \
                        t.position, t.labels, t.assignee, t.agent, t.created_at, \
-                       t.updated_at, t.closed_at";
+                       t.updated_at, t.closed_at, t.branch";
 /// How many columns that is: where a query's own columns start.
-const COLUMN_COUNT: usize = 14;
+const COLUMN_COUNT: usize = 15;
 
 /// Why a task was refused.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -106,8 +108,11 @@ pub enum TaskError {
     /// A tail of an id names more than one task.
     #[error("{0:?} is the end of more than one id: give more of it")]
     AmbiguousId(String),
+    /// The branch is empty, too long or not one line.
+    #[error("{0:?} is not a branch: one line of at most {MAX_BRANCH_CHARS} characters")]
+    BadBranch(String),
     /// A change that changes nothing.
-    #[error("nothing to change: give a title, body, status, priority, labels or assignee")]
+    #[error("nothing to change: give a title, body, status, priority, labels, assignee or branch")]
     NothingToChange,
 }
 
@@ -298,6 +303,8 @@ pub struct TaskPatch {
     pub labels: Option<Vec<String>>,
     /// A new assignee, or none any more (`Some(None)`).
     pub assignee: Option<Option<String>>,
+    /// The branch of the worktree made for the task, or none any more.
+    pub branch: Option<Option<String>>,
 }
 
 impl TaskPatch {
@@ -349,6 +356,8 @@ pub struct Task {
     pub updated_at: i64,
     /// When it was closed, while it is done or canceled.
     pub closed_at: Option<i64>,
+    /// The branch of the worktree made for it, when work was started.
+    pub branch: Option<String>,
 }
 
 impl Task {
@@ -459,6 +468,22 @@ fn checked_assignee(assignee: Option<&str>) -> Result<Option<String>, TaskError>
     Ok(Some(one))
 }
 
+fn checked_branch(branch: Option<&str>) -> Result<Option<String>, TaskError> {
+    let Some(given) = branch else {
+        return Ok(None);
+    };
+    let branch = given.trim();
+    if branch.is_empty() {
+        return Ok(None);
+    }
+    if branch.chars().count() > MAX_BRANCH_CHARS
+        || branch.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(TaskError::BadBranch(given.to_owned()));
+    }
+    Ok(Some(branch.to_owned()))
+}
+
 fn task_from_row(row: &Row<'_>) -> rusqlite::Result<Task> {
     let scope: String = row.get(1)?;
     let root: String = row.get(2)?;
@@ -486,6 +511,7 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<Task> {
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
         closed_at: row.get(13)?,
+        branch: row.get(14)?,
     })
 }
 
@@ -608,6 +634,7 @@ impl Store {
                 created_at: at,
                 updated_at: at,
                 closed_at: status.is_closed().then_some(at),
+                branch: None,
             };
             tx.execute(
                 "INSERT INTO task (id, scope, root, title, body, status, priority, position,
@@ -648,10 +675,17 @@ impl Store {
             Some(given) => Some(checked_assignee(given.as_deref())?),
             None => None,
         };
+        let branch = match &patch.branch {
+            Some(given) => Some(checked_branch(given.as_deref())?),
+            None => None,
+        };
         let id = self.task_id(id)?;
         self.write(StoreChange::Tasks, |tx| {
             let mut task = row_of(tx, &id)?;
             let key = task.scope.key();
+            if let Some(branch) = branch {
+                task.branch = branch;
+            }
             if let Some(title) = title {
                 task.title = title;
             }
@@ -875,7 +909,8 @@ impl Store {
 fn write_task(tx: &Transaction<'_>, task: &Task) -> Result<()> {
     tx.execute(
         "UPDATE task SET title = ?2, body = ?3, status = ?4, priority = ?5, position = ?6,
-                labels = ?7, assignee = ?8, title_hash = ?9, updated_at = ?10, closed_at = ?11
+                labels = ?7, assignee = ?8, title_hash = ?9, updated_at = ?10, closed_at = ?11,
+                branch = ?12
          WHERE id = ?1",
         params![
             task.id,
@@ -888,7 +923,8 @@ fn write_task(tx: &Transaction<'_>, task: &Task) -> Result<()> {
             task.assignee,
             text_hash(&task.title),
             task.updated_at,
-            task.closed_at
+            task.closed_at,
+            task.branch
         ],
     )?;
     Ok(())
@@ -1094,6 +1130,35 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("nothing to change"));
+    }
+
+    #[test]
+    fn the_branch_of_a_task_is_kept_and_taken_away_and_is_one_plain_word() {
+        let store = Store::open_in_memory().unwrap();
+        let task = add(&store, "Fix the login", 1);
+        assert_eq!(task.branch, None);
+        let set = |branch: Option<&str>| TaskPatch {
+            branch: Some(branch.map(str::to_owned)),
+            ..TaskPatch::default()
+        };
+        let started = store
+            .update_task(&task.id, &set(Some(" fix-the-login-1a2b3c4d ")), 2)
+            .unwrap();
+        assert_eq!(started.branch.as_deref(), Some("fix-the-login-1a2b3c4d"));
+        // It survives another change, and is read back whole.
+        let other = TaskPatch {
+            priority: Some(TaskPriority::High),
+            ..TaskPatch::default()
+        };
+        store.update_task(&task.id, &other, 3).unwrap();
+        assert_eq!(
+            store.task(&task.id).unwrap().branch.as_deref(),
+            Some("fix-the-login-1a2b3c4d")
+        );
+        let refused = store.update_task(&task.id, &set(Some("two words")), 4);
+        assert!(refused.unwrap_err().to_string().contains("not a branch"));
+        let cleared = store.update_task(&task.id, &set(None), 5).unwrap();
+        assert_eq!(cleared.branch, None);
     }
 
     #[test]

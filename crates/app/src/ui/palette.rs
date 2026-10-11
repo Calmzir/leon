@@ -1386,6 +1386,7 @@ impl Shell {
             Action::SetDen(id) => self.den_choose(&id, cx),
             Action::SaveDenAs(name) => self.den_save_as(&name, cx),
             Action::NewTask(title) => self.new_task(&title, cx),
+            Action::StartTask(agent) => self.start_task_work(agent, window, cx),
             Action::RenameDen(name) => self.den_rename(&name, cx),
             Action::DeleteDen => self.den_delete(cx),
             Action::AddAgent {

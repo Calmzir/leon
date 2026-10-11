@@ -578,6 +578,7 @@ platform (see below).
 | Refresh usage now | palette only | palette only |
 | Show the task board | `⇧⌘I` | `Ctrl+Shift+Alt+I` |
 | New task… | palette only | palette only |
+| Start work on the task… | palette only | palette only |
 | Go home | `⌥⇧⌘H` | `Ctrl+Shift+Alt+H` |
 | Open the Den | `⌥⇧⌘L` | `Ctrl+Shift+Alt+L` |
 | Edit the Den | palette only (`E` in the Den) | palette only (`E` in the Den) |
@@ -1582,14 +1583,23 @@ leon task search signing
 `leon task mcp` serves the same board to an agent over MCP; register it in the
 agent's own configuration (`claude mcp add leon-tasks -- leon task mcp`).
 
-The window shows the board too: `⇧⌘I` (`Ctrl+Shift+Alt+I`), or **Show the task
-board** in the palette. The columns are backlog, todo, doing, review and done;
-the arrows (or `h` `j` `k` `l`) move the cursor, `Shift` with them carries the
-card to another column or another place in its column, `n` asks for the title
-of a new task in the cursor's column, `d` finishes the card, `p` raises its
-priority and `g` switches between the project's board and the global one. What
-an agent writes from another process shows up within a couple of seconds. The
-sync with GitHub issues and Linear is not here yet.
+The window shows the board too, in the main pane with the sidebar beside it:
+the **Tasks** row under Home, `⇧⌘I` (`Ctrl+Shift+Alt+I`), or **Show the task
+board** in the palette. The columns are backlog, todo, doing, review and done.
+Drag a card with the pointer to any place of any column, or use the keys: the
+arrows (or `h` `j` `k` `l`) move the cursor, `Shift` with them carries the card,
+`n` asks for the title of a new task in the cursor's column, `d` finishes the
+card, `p` raises its priority and `g` switches between the project's board and
+the global one; the chips in the header change the project. What an agent
+writes from another process shows up within a couple of seconds.
+
+**To code a task**, press `w` (or Enter, or **Start work** in the card's strip):
+Leon asks which agent, makes a worktree named after the task (`fix-the-login-1a2b3c4d`),
+starts the agent in it with the task as its prompt, and moves the card to doing
+with the branch on it. The agent is told how to move the card to review when it
+is done. **Only a worktree** makes the worktree and opens a shell in it. A card
+that has a worktree opens it instead of making another. The sync with GitHub
+issues and Linear is not here yet.
 [`docs/TASKS.md`](docs/TASKS.md) has the whole of it.
 
 ## Usage

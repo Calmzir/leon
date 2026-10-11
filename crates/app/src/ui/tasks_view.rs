@@ -94,6 +94,14 @@ pub struct TasksUi {
     refresher: Option<Task<()>>,
 }
 
+impl TasksUi {
+    /// Stops the loop that reads again: the board is not the main pane any
+    /// more.
+    pub(super) fn refresher_stop(&mut self) {
+        self.refresher = None;
+    }
+}
+
 impl Default for TasksUi {
     fn default() -> Self {
         Self {
@@ -493,6 +501,7 @@ impl Shell {
             }
             Action::Priority => self.tasks_raise_priority(),
             Action::New => self.tasks_ask_for_a_title(window, cx),
+            Action::Start => self.tasks_start(window, cx),
             Action::Scope => {
                 let which = if self.tasks_ui.want_global {
                     self.tasks_pick_project()
@@ -932,6 +941,19 @@ impl Shell {
             footer = footer.child(agent_icon(agent, px(12.), &c));
         }
         footer = footer.child(mono(meta));
+        if let Some(branch) = &task.branch {
+            footer = footer.child(
+                div()
+                    .debug_selector(move || format!("tasks-branch-{column}-{row}"))
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(3.))
+                    .text_color(c.success)
+                    .child(icon(IconName::GitBranch, px(11.), c.success))
+                    .child(mono(branch.clone()).truncate()),
+            );
+        }
         let mut labels = div().flex().flex_wrap().gap(px(4.));
         for label in &task.labels {
             labels = labels.child(
@@ -1110,6 +1132,18 @@ impl Shell {
                     }),
             );
         let mut buttons = div().flex_none().flex().items_center().gap(px(6.));
+        let has_branch = task.branch.is_some();
+        buttons = buttons.child(
+            action(
+                "tasks-start",
+                if has_branch {
+                    "Open worktree  ⏎"
+                } else {
+                    "Start work  ⏎"
+                },
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.tasks_start(window, cx))),
+        );
         if task.status != TaskStatus::Done {
             buttons = buttons.child(action("tasks-done", "Done  d").on_click(cx.listener(
                 |this, _, _, cx| {
@@ -1168,6 +1202,7 @@ impl Shell {
             .child(hint("← → ↑ ↓", "move"))
             .child(hint("⇧", "carry the card"))
             .child(hint("drag", "move it anywhere"))
+            .child(hint("w", "start work"))
             .child(hint("n", "new"))
             .child(hint("d", "done"))
             .child(hint("p", "priority"))

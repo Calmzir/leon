@@ -172,6 +172,7 @@ pub fn json_of(task: &Task, snippet: Option<&str>) -> Value {
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "closed_at": task.closed_at,
+        "branch": task.branch,
     });
     if let (Some(snippet), Some(object)) = (snippet, value.as_object_mut()) {
         let plain: String = snippet
@@ -214,6 +215,9 @@ pub fn detail(task: &Task) -> String {
     }
     if let Some(agent) = &task.agent {
         field("created by", agent.clone());
+    }
+    if let Some(branch) = &task.branch {
+        field("branch", branch.clone());
     }
     if !task.body.is_empty() {
         text.push('\n');

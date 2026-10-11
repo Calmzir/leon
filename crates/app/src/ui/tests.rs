@@ -7903,6 +7903,10 @@ mod tests_usage;
 mod tests_tasks;
 
 #[cfg(leon_posix_tests)]
+#[path = "tests_task_work.rs"]
+mod tests_task_work;
+
+#[cfg(leon_posix_tests)]
 #[path = "tests_notify.rs"]
 mod tests_notify;
 

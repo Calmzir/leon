@@ -58,6 +58,9 @@ pub enum Action {
     Priority,
     /// Switch between the project's board and the global one.
     Scope,
+    /// Start work on the card: a worktree and a session, or open the one it
+    /// has.
+    Start,
 }
 
 /// The action of a key pressed while the board has the keyboard, or `None`
@@ -81,6 +84,7 @@ pub fn action_of(key: &str, shift: bool, other_modifier: bool) -> Option<Action>
         ("d", false) => Action::Done,
         ("p", false) => Action::Priority,
         ("g", false) => Action::Scope,
+        ("w" | "enter", false) => Action::Start,
         _ => return None,
     };
     Some(action)
@@ -359,6 +363,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             closed_at: None,
+            branch: None,
         }
     }
 
@@ -395,6 +400,8 @@ mod tests {
             ("d", false, Action::Done),
             ("p", false, Action::Priority),
             ("g", false, Action::Scope),
+            ("w", false, Action::Start),
+            ("enter", false, Action::Start),
         ];
         for (key, shift, action) in table {
             assert_eq!(action_of(key, shift, false), Some(action), "{key} {shift}");

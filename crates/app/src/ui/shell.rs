@@ -2987,6 +2987,17 @@ impl Shell {
             C::ShowUsage => self.toggle_usage(window, cx),
             C::ShowTasks => self.toggle_tasks(window, cx),
             C::NewTask => self.begin_flow(command, window, cx),
+            C::StartTask => {
+                if self.tasks_open() && self.tasks_ui.board.selected().is_some() {
+                    self.tasks_ui.return_from_palette = true;
+                    self.begin_flow(command, window, cx);
+                } else {
+                    self.engine.report(
+                        crate::engine::StatusKind::Info,
+                        "Open the task board and select a task first.",
+                    );
+                }
+            }
             C::ShowDen => self.toggle_den(window, cx),
             C::GoHome => self.go_home(window, cx),
             C::EditDen => self.toggle_den_editor(window, cx),

@@ -51,31 +51,62 @@ creates in a loop.
 
 ## The board in the window
 
-`⇧⌘I` (`Ctrl+Shift+Alt+I` on Linux and Windows) or **Show the task board** in
-the palette opens the board of the project the window is on; **New task…** in
-the palette creates a task from anywhere. The columns are `backlog`, `todo`,
-`doing`, `review` and `done` (a canceled task has no column; `leon task list
---all` shows it).
+The board is the main pane, as the Den is, and the sidebar stays beside it. It
+opens from the **Tasks** row under Home, `⇧⌘I` (`Ctrl+Shift+Alt+I` on Linux and
+Windows), **Show the task board** in the palette, or `leon --tasks` at the
+start; the same command, `Esc` or the row closes it and puts back what the
+pane showed. **New task…** in the palette creates a task from anywhere. The
+columns are `backlog`, `todo`, `doing`, `review` and `done` (a canceled task
+has no column; `leon task list --all` shows it).
+
+The header names the project and counts what is open and done, and has one
+chip per project of this computer and **Global**. A project on another
+machine has no board here: its tasks live on that machine.
+
+### Dragging
+
+Drag a card with the pointer to any place of any column: a line marks where it
+would land, the column it is over lights up, and an empty column takes the
+card in all its height. Letting go outside the columns, or `Esc`, drops
+nothing. Dropping a card where it already is changes nothing.
+
+### Keys
 
 | Key | What it does |
 | --- | --- |
 | `←` `→` or `h` `l` | Cursor to the column on the left or right |
 | `↑` `↓` or `k` `j` | Cursor to the card above or below |
 | `Shift` + those | Carry the card: to the bottom of the next column, or one place up or down in its own |
+| `w` or `Enter` | Start work on the card (see below), or open its worktree |
 | `n` | Ask for the title of a new task, in the cursor's column |
 | `d` | Finish the card |
 | `p` | Raise its priority: none, low, medium, high, urgent, none |
 | `g` | Switch between the project's board and the global one |
-| `Esc` | Close |
+| `Esc` | Let go of a drag, or close the board |
 
-A click selects a card. The board shows only boards of this computer: for a
-project on another machine, or with no project selected, it shows the global
-board and says why. The window reads the store again every second and a half
-while the board is open, because an agent writes from another process; a card
-that moved is followed by the cursor.
+A click selects a card; the strip under the columns shows it in full with its
+buttons. Every change goes through the engine, as every write of the window
+does, so the status line says what was done (`Moved 1a2b3c4d to doing: ...`).
+The open board reads the store every second and a half because an agent writes
+from another process; a card that moved is followed by the cursor.
 
-Every change goes through the same operations as the rest of the window's
-writes, so the status line says what was done (`Moved 1a2b3c4d to doing: ...`).
+### Start work on a task
+
+`w` on a card of a project's board asks which agent codes it (the agents
+installed here that take a prompt, or **Only a worktree**), then:
+
+1. makes a worktree named from the title and the task's short id
+   (`fix-the-login-1a2b3c4d`; a number is added if git has that name);
+2. starts the agent in it with the task as its prompt: the title, the body and
+   how to move the card to review when it is done (`"$LEON_BIN" task move <id>
+   review`), behind the project's `setup` when its `leon.toml` has one;
+3. **only then** writes the card: its branch, the column `doing` and, when
+   nobody had it, the agent as assignee.
+
+A worktree that git refuses leaves the card where it was and says why. A card
+with a branch shows it on the card, and `w` opens that worktree instead of
+making another; when the worktree is gone, `w` starts the work again. The
+global board cannot start work: it has no project to make a worktree in.
 
 ## The command line
 
@@ -87,6 +118,7 @@ leon task board [--global]
 leon task show <id> [--json]
 leon task edit <id> [--title T] [--body B | --body -] [--status S] [--priority P]
                [--label L]... | --no-labels] [--assignee A | --no-assignee]
+               [--branch B | --no-branch]
 leon task move <id> <status> [--before <id>]
 leon task done <id>
 leon task rm <id>
@@ -124,7 +156,7 @@ agent was started in (`CLAUDE_PROJECT_DIR` when the client sets it).
 | `task_create` | Adds a task, or answers the open one with the same title (`created: false`). |
 | `task_list` | The open tasks in the order of the board; `include_closed`, `status`, `assignee`, `label`, `scope`, `limit`. |
 | `task_get` | One task in full. |
-| `task_update` | Changes title, body, status, priority, labels or assignee. |
+| `task_update` | Changes title, body, status, priority, labels, assignee or the branch of its worktree. |
 | `task_move` | Moves a task to a column, to the bottom or above another task. |
 | `task_search` | Searches titles and bodies of this project's board and the global one. |
 
@@ -133,7 +165,7 @@ removing for good is `leon task rm`, the person's.
 
 ## Where it is stored
 
-In `leon.db`, table `task` (migration 20) with a full-text index over the
+In `leon.db`, table `task` (migrations 20 and 21) with a full-text index over the
 titles and bodies, scoped like the memory's entries by the identity of the
 project's root folder, so removing a project and adding it again loses nothing.
 The store announces each write (`StoreChange::Tasks`) so a window reading it

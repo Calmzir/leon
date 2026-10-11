@@ -16,13 +16,22 @@
   `task_search`; no tool deletes) and is registered by the person in the
   agent's own configuration: Leon writes nothing into a project for it. See
   [docs/TASKS.md](docs/TASKS.md).
-* The board in the window: `⇧⌘I` (`Ctrl+Shift+Alt+I`) or **Show the task
-  board** shows the project's tasks in columns, and **New task…** in the
-  palette creates one from anywhere. Arrows move the cursor, Shift with them
-  carries a card to another column or place, `n` creates a task, `d` finishes
-  it, `p` raises its priority and `g` switches between the project's board and
-  the global one. What an agent writes from another process appears within a
-  couple of seconds.
+* The board in the window, in the main pane with the sidebar beside it: the
+  **Tasks** row under Home, `⇧⌘I` (`Ctrl+Shift+Alt+I`), **Show the task
+  board**, or `leon --tasks`. Cards are dragged with the pointer to any place
+  of any column, with a line where they would land; the keys carry them too
+  (`Shift` with the arrows). Each card shows its priority, labels, agent and
+  branch; a strip shows the selected one in full; chips in the header change
+  the project. **New task…** in the palette creates one from anywhere, and
+  what an agent writes from another process appears within a couple of
+  seconds.
+* **Start work on a task** (`w`, Enter, or the button of the card's strip):
+  makes a worktree named after the task, starts the agent you pick in it with
+  the task as its prompt, and moves the card to doing with the branch on it;
+  **Only a worktree** opens a shell in it instead. The card is written only
+  once the worktree exists, a card that has a worktree opens it, and the
+  agent is told how to move the card to review. `leon task edit --branch`
+  and the MCP `task_update` read and write the branch.
 
 ### Fixed
 

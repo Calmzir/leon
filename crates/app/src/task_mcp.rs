@@ -212,6 +212,11 @@ pub fn tool_list() -> Value {
                     "type": "string",
                     "description": "The new assignee; an empty string takes it away.",
                 },
+                "branch": {
+                    "type": "string",
+                    "description": "The branch of the worktree this task is worked on in; an \
+                                    empty string takes it away.",
+                },
             }),
             &["id"],
         ),
@@ -540,7 +545,7 @@ impl<B: Backend> Server<B> {
             }
             "task_update" => {
                 args.known(&[
-                    "id", "title", "body", "status", "priority", "labels", "assignee",
+                    "id", "title", "body", "status", "priority", "labels", "assignee", "branch",
                 ])?;
                 let patch = TaskPatch {
                     title: args.text("title")?,
@@ -551,6 +556,9 @@ impl<B: Backend> Server<B> {
                     assignee: args
                         .text("assignee")?
                         .map(|assignee| Some(assignee).filter(|a| !a.trim().is_empty())),
+                    branch: args
+                        .text("branch")?
+                        .map(|branch| Some(branch).filter(|b| !b.trim().is_empty())),
                 };
                 self.backend
                     .update(&args.required("id")?, patch)

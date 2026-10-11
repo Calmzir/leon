@@ -9,6 +9,7 @@
 //! leon task show <id> [--json]
 //! leon task edit <id> [--title T] [--body B | --body -] [--status S] [--priority P]
 //!                [--label L]... | --no-labels] [--assignee A | --no-assignee]
+//!                [--branch B | --no-branch]
 //! leon task move <id> <status> [--before <id>]
 //! leon task done <id>
 //! leon task rm <id>
@@ -109,6 +110,8 @@ pub enum Action {
         labels: Option<Vec<String>>,
         /// The new assignee, or none (`Some(None)`).
         assignee: Option<Option<String>>,
+        /// The branch of the task's worktree, or none (`Some(None)`).
+        branch: Option<Option<String>>,
     },
     /// Move a task to a column.
     Move {
@@ -160,7 +163,7 @@ pub fn usage() -> String {
          {slug} task list [--global] [--status S] [--all] [--assignee A] [--label L] [--limit N] [--json]\n  \
          {slug} task board [--global]\n  \
          {slug} task show <id> [--json]\n  \
-         {slug} task edit <id> [--title T] [--body B|-] [--status S] [--priority P] [--label L]... [--no-labels] [--assignee A | --no-assignee]\n  \
+         {slug} task edit <id> [--title T] [--body B|-] [--status S] [--priority P] [--label L]... [--no-labels] [--assignee A | --no-assignee] [--branch B | --no-branch]\n  \
          {slug} task move <id> <status> [--before <id>]\n  \
          {slug} task done <id>\n  \
          {slug} task rm <id>\n  \
@@ -221,7 +224,8 @@ pub fn parse(
     let mut command: Option<String> = None;
     let mut words: Vec<String> = Vec::new();
     let (mut global, mut json, mut all) = (false, false, false);
-    let (mut no_labels, mut no_assignee) = (false, false);
+    let (mut no_labels, mut no_assignee, mut no_branch) = (false, false, false);
+    let mut branch: Option<String> = None;
     let mut title: Option<String> = None;
     let mut body: Option<Body> = None;
     let mut status: Option<TaskStatus> = None;
@@ -289,6 +293,14 @@ pub fn parse(
             "--no-assignee" => {
                 no_assignee = true;
                 given.push("--no-assignee");
+            }
+            "--no-branch" => {
+                no_branch = true;
+                given.push("--no-branch");
+            }
+            "--branch" => {
+                branch = Some(value("a branch name")?);
+                given.push("--branch");
             }
             "--title" => {
                 title = Some(value("a title")?);
@@ -370,6 +382,8 @@ pub fn parse(
             "--no-labels",
             "--assignee",
             "--no-assignee",
+            "--branch",
+            "--no-branch",
         ],
         "move" => &["--before"],
         "search" => &["--global", "--limit", "--json"],
@@ -440,6 +454,9 @@ pub fn parse(
             if !labels.is_empty() && no_labels {
                 return Err("--label and --no-labels exclude each other.".to_owned());
             }
+            if branch.is_some() && no_branch {
+                return Err("--branch and --no-branch exclude each other.".to_owned());
+            }
             let edit = Action::Edit {
                 id: one_id(&words)?,
                 title,
@@ -457,6 +474,11 @@ pub fn parse(
                     Some(None)
                 } else {
                     assignee.map(Some)
+                },
+                branch: if no_branch {
+                    Some(None)
+                } else {
+                    branch.map(Some)
                 },
             };
             if given.is_empty() {
@@ -680,6 +702,7 @@ fn carry_out(invocation: Invocation) -> Result<(), String> {
             priority,
             labels,
             assignee,
+            branch,
         } => {
             service.get(&id).map_err(said)?;
             let patch = TaskPatch {
@@ -689,6 +712,7 @@ fn carry_out(invocation: Invocation) -> Result<(), String> {
                 priority,
                 labels,
                 assignee,
+                branch,
             };
             let task = service.update(&id, &patch).map_err(said)?;
             print(&format!("Changed {}\n", tasks::line(&task)));
