@@ -170,7 +170,7 @@ export default function Den() {
               })}>
               <View
                 style={{
-                  width: 56,
+                  width: 76,
                   alignItems: 'center',
                   justifyContent: 'flex-end',
                   backgroundColor: t.background,
@@ -179,7 +179,7 @@ export default function Den() {
                   paddingTop: 4,
                   opacity: lion.mood === 'quiet' ? 0.6 : 1,
                 }}>
-                <Lion cub={cub} width={44} beat={beat} />
+                <Lion cub={cub} width={68} beat={beat} />
               </View>
               <View style={{ flex: 1, gap: 4 }}>
                 <Txt variant="strong" numberOfLines={2}>

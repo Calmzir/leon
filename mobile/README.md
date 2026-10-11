@@ -25,7 +25,7 @@ exposed to React Native by [`modules/leon-link-native`](modules/leon-link-native
 | `src/theme`, `src/ui` | the Leon theme from [`brand/tokens.md`](../brand/tokens.md) and the few components built on it |
 | `modules/leon-link-native` | the generated Turbo Module around the Rust crate |
 | `modules/leon-background` | Android only: the foreground service that keeps the link behind other apps, and the notifications |
-| `assets` | icon and splash, rendered from `brand/logo/final`; `assets/den`, the Den's lions, cut from the desktop's sheets by `scripts/den-lions.py` (their licence is beside them) |
+| `assets` | icon and splash, rendered from `brand/logo/final`; `assets/den`, the Den's lions in 2.5D, drawn by the desktop's renderer (`cargo run -p leon-den --features den3d --example den_lions_png -- mobile/assets/den`) |
 
 Built with Expo SDK 57 (React Native 0.86, New Architecture), Expo Router,
 Zustand, FlashList, react-native-keyboard-controller and

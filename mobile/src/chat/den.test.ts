@@ -57,9 +57,9 @@ describe('the lions of the den', () => {
 test('a state this app does not know is some kind of working', () => {
   expect(moodOf('juggling')).toBe('working');
   expect(labelOf('juggling')).toBe('Working');
-  expect(framesOf('juggling')).toEqual([3, 4]);
+  expect(framesOf('juggling')).toEqual([1, 2]);
   expect(framesOf('fainted')).toEqual([9]);
-  expect(framesOf('needs-permission')).toEqual([0]);
+  expect(framesOf('needs-permission')).toEqual([7]);
 });
 
 test('a lion wears the same body every time', () => {

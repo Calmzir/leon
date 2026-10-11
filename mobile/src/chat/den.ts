@@ -100,26 +100,32 @@ export function tally(lions: Lion[]): { live: number; working: number; waiting: 
   };
 }
 
-/** Which frames of a lion's strip show a state, in order; one frame stands still. */
+/**
+ * Which pictures of a lion's strip show a state, in order; one picture
+ * stands still. The strip: standing, typing (1, 2), reading (3, 4), thinking
+ * (5, 6), staring at the person (7), asleep (8), out cold (9).
+ */
 export function framesOf(state: string): number[] {
   switch (state) {
     case 'reading':
     case 'searching':
-      return [5, 6];
+      return [3, 4];
     case 'thinking':
     case 'mystery':
     case 'planning':
-      return [0, 0, 0, 7];
-    case 'waiting-for-user':
+    case 'delegating':
+      return [5, 6];
     case 'needs-permission':
+      return [7];
+    case 'waiting-for-user':
     case 'idle':
       return [0];
     case 'asleep':
-      return [7];
+      return [8];
     case 'fainted':
       return [9];
     default:
-      return QUIET.has(state) ? [0] : [3, 4];
+      return QUIET.has(state) ? [0] : [1, 2];
   }
 }
 

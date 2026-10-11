@@ -30,6 +30,10 @@ name = "den_iso_png"
 required-features = ["den3d"]
 
 [[example]]
+name = "den_lions_png"
+required-features = ["den3d"]
+
+[[example]]
 name = "den_view_png"
 required-features = ["den3d"]
 

@@ -101,8 +101,8 @@ function DenCard() {
         {shown.length > 0 ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
             {shown.map((lion, at) => (
-              <View key={lion.key} style={{ marginLeft: at === 0 ? 0 : -8, opacity: lion.mood === 'quiet' ? 0.55 : 1 }}>
-                <Lion cub={lion.cub} width={30} beat={0} />
+              <View key={lion.key} style={{ marginLeft: at === 0 ? 0 : -14, opacity: lion.mood === 'quiet' ? 0.55 : 1 }}>
+                <Lion cub={lion.cub} width={40} beat={0} />
               </View>
             ))}
           </View>
