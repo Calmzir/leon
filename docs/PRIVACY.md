@@ -1,6 +1,6 @@
 # Privacy
 
-Leon is made by Zavu. This page covers the Leon desktop application and the
+Published at <https://getleon.dev/privacy>. Leon is made by Zavu. This page covers the Leon desktop application and the
 Leon phone app (iPhone and Android). Last updated: October 11, 2026.
 
 ## In short
