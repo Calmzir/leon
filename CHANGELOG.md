@@ -4,6 +4,64 @@
 
 ### Added
 
+* A board of tasks that people and agents share, first the part without a
+  window: `leon task add`, `list`, `board`, `show`, `edit`, `move`, `done`,
+  `rm`, `search` and `mcp`. A task is a title and a body with a column
+  (`backlog`, `todo`, `doing`, `review`, `done`, `canceled`), a priority, labels
+  and an assignee; it belongs to a project, shared by all its git worktrees, or
+  to every project (`--global`). Creating a task whose title an open task
+  already has adds nothing and answers with that task, so an agent that
+  retries does not duplicate it. `leon task mcp` serves the board to an agent
+  (`task_create`, `task_list`, `task_get`, `task_update`, `task_move`,
+  `task_search`; no tool deletes) and is registered by the person in the
+  agent's own configuration: Leon writes nothing into a project for it. See
+  [docs/TASKS.md](docs/TASKS.md).
+* The board in the window, in the main pane with the sidebar beside it: the
+  **Tasks** row under Home, `⇧⌘I` (`Ctrl+Shift+Alt+I`), **Show the task
+  board**, or `leon --tasks`. Cards are dragged with the pointer to any place
+  of any column, with a line where they would land; the keys carry them too
+  (`Shift` with the arrows). Each card shows its priority, labels, agent and
+  branch; a strip shows the selected one in full; chips in the header change
+  the project. **New task…** in the palette creates one from anywhere, and
+  what an agent writes from another process appears within a couple of
+  seconds.
+* A new task is made in the same panel as the details, with the title field
+  already holding the keyboard: `n`, **New task**, the **+** of a column and
+  the palette's **New task…** open it, and it takes the description, the
+  column, the priority, the assignee and the labels before the task exists.
+  `Esc` throws it away.
+* **GitHub issues**: a project's tasks can be synced with the issues of its
+  repository through your `gh` login. The chip in the header (or `s`) names the
+  repository and says what it will do before anything is written: it makes
+  `status:*` and `priority:*` labels there, reads the issues (open ones become
+  tasks) and keeps a task and its issue equal, field by field against what
+  both said at the last sync, so a change on one side goes to the other and a
+  conflict goes to the later change. It runs when the board opens, every
+  minute and a half, and on **Sync now**. An issue is opened only by **Create
+  GitHub issue** on one card, none is deleted, and a closed or unlinked issue
+  is not imported again. Cards show `GH #12`. See
+  [docs/TASKS.md](docs/TASKS.md).
+* The details of a card (a click on it, or `e`): a drawer over
+  the right edge of the board (it moves nothing) to read and edit what a card cannot show: the title, a
+  description of several lines, who it is for, status and priority, labels and
+  where its worktree is, with every action in view (create the worktree,
+  mark done, cancel, delete). Text is saved when you close it or choose another card;
+  while a field has the keyboard, the board's keys are typed and not run.
+* **Create the worktree of a task** (`w`, Enter, or **Create worktree** in the
+  card's details): makes a worktree named after the task, starts the agent you
+  pick in it with the task as its prompt, and moves the card to doing, linked
+  to it; **Only a worktree** opens a shell in it instead. The card shows the
+  branch and whether it is **active** (working, waiting for you, asks you,
+  failed, at the prompt or no session), the details add the folder and **Open
+  worktree** / **Open session**, and a card whose worktree was removed says so
+  and can make it again. The card is written only once the worktree exists,
+  and the agent is told how to move it to review. `leon task edit --branch` and
+  the MCP `task_update` read and write the branch.
+
+### Fixed
+
+* `leon task board` read the board as one list cut at 500 tasks, so a long
+  backlog could hide the other columns; every column is read on its own now.
 * A viewer for pictures. A PNG, JPEG, GIF, WebP, BMP, ICO or TIFF file on this
   computer opens in a tab like a text file does, from the file tree, the quick
   open, a typed path or a link in the terminal, drawn to fit the pane (never

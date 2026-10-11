@@ -57,7 +57,7 @@ use crate::ids::MachineId;
 
 /// The scope column of an entry that belongs to no project. No path has this
 /// identity: a key is a path, and this is not one.
-const GLOBAL_SCOPE: &str = "global:";
+pub(super) const GLOBAL_SCOPE: &str = "global:";
 
 /// The longest title, in characters.
 pub const MAX_TITLE_CHARS: usize = 120;
@@ -236,14 +236,14 @@ impl MemoryScope {
     }
 
     /// The scope column: the identity of the root, or the global marker.
-    fn key(&self) -> String {
+    pub(super) fn key(&self) -> String {
         match self {
             MemoryScope::Global => GLOBAL_SCOPE.to_owned(),
             MemoryScope::Project(root) => crate::path::key(root),
         }
     }
 
-    fn check(&self) -> Result<(), MemoryError> {
+    pub(super) fn check(&self) -> Result<(), MemoryError> {
         match self {
             MemoryScope::Global => Ok(()),
             MemoryScope::Project(root) => {
@@ -450,7 +450,7 @@ pub struct MemoryHit {
 
 /// One line of text: control characters and line breaks become spaces, runs
 /// of white space one space.
-fn one_line(text: &str) -> String {
+pub(super) fn one_line(text: &str) -> String {
     text.split(|c: char| c.is_whitespace() || c.is_control())
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
@@ -459,7 +459,7 @@ fn one_line(text: &str) -> String {
 
 /// The text as it is kept: line endings as `\n`, no other control character
 /// but the tab, no blank space around it.
-fn clean_text(text: &str) -> String {
+pub(super) fn clean_text(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .chars()

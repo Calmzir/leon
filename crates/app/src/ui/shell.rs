@@ -462,6 +462,8 @@ pub enum Main {
     Live(LiveId),
     /// The Den: every live agent session as a lion at work.
     Den,
+    /// The board of tasks.
+    Tasks,
 }
 
 /// The application window's view.
@@ -502,6 +504,7 @@ pub struct Shell {
     pub(super) connect_ui: super::connect::ConnectUi,
     /// The usage bar and view.
     pub(super) usage: super::usage_view::UsageUi,
+    pub(super) tasks_ui: super::tasks_view::TasksUi,
     pub(super) den: super::den_view::DenUi,
     /// Following the agents' transcripts for the sessions' lights.
     pub(super) status: super::transcript_watch::StatusUi,
@@ -800,6 +803,10 @@ impl Shell {
                         }
                         // A project somebody just added may be asked about.
                         this.show_memory_offer(cx);
+                        // The board shows what the engine just wrote.
+                        if this.tasks_open() {
+                            this.tasks_reload();
+                        }
                         cx.notify()
                     })
                     .is_err()
@@ -843,6 +850,7 @@ impl Shell {
             settings_ui,
             connect_ui,
             usage: super::usage_view::UsageUi::default(),
+            tasks_ui: super::tasks_view::TasksUi::default(),
             den: super::den_view::DenUi::default(),
             status: super::transcript_watch::StatusUi::default(),
             home: super::home::HomeUi::default(),
@@ -1072,7 +1080,7 @@ impl Shell {
                     && !self.files.contains_key(id)
                     && !self.changes.contains_key(id)
             }
-            Main::Empty | Main::Session(_) | Main::Den => false,
+            Main::Empty | Main::Session(_) | Main::Den | Main::Tasks => false,
         };
         if gone {
             self.main = Main::Empty;
@@ -2008,7 +2016,7 @@ impl Shell {
                 .map(|session| session.machine.clone())
                 .or_else(|| self.files.get(id).map(|doc| doc.machine.clone()))
                 .or_else(|| self.changes.get(id).map(|view| view.target.machine.clone())),
-            Main::Empty | Main::Den => None,
+            Main::Empty | Main::Den | Main::Tasks => None,
         };
         let found = if self.pane == Pane::Sidebar {
             from_row().or_else(from_main)
@@ -2087,6 +2095,15 @@ impl Shell {
                         Some((session.machine.clone(), None, session.cwd.clone()))
                     }
                 },
+                Main::Tasks => {
+                    let id = self.tasks_ui.project.clone()?;
+                    let entry = self.snapshot.project(&id)?;
+                    Some((
+                        entry.project.machine_id.clone(),
+                        Some(id),
+                        entry.project.root.clone(),
+                    ))
+                }
                 Main::Empty | Main::Den => None,
             }
         };
@@ -2691,6 +2708,14 @@ impl Shell {
         {
             return true;
         }
+        // So is the board of tasks.
+        if self.overlay == Overlay::None
+            && self.pane == Pane::Main
+            && self.tasks_open()
+            && self.tasks_key(stroke, window, cx)
+        {
+            return true;
+        }
         // The changes tab has its own keys while it has the keyboard and no
         // field of it does.
         if self.overlay == Overlay::None
@@ -2731,7 +2756,8 @@ impl Shell {
         ) || filtering
             || finding
             || self.file_has_keyboard()
-            || self.changes_typing(window, cx);
+            || self.changes_typing(window, cx)
+            || self.tasks_typing(window, cx);
         if self.overlay == Overlay::Palette && self.palette_key(stroke, window, cx) {
             return true;
         }
@@ -2960,6 +2986,20 @@ impl Shell {
             },
             C::Settings => self.open_settings(window, cx),
             C::ShowUsage => self.toggle_usage(window, cx),
+            C::ShowTasks => self.toggle_tasks(window, cx),
+            C::NewTask if self.tasks_open() => self.open_create(None, window, cx),
+            C::NewTask => self.begin_flow(command, window, cx),
+            C::StartTask => {
+                if self.tasks_open() && self.tasks_ui.board.selected().is_some() {
+                    self.tasks_ui.return_from_palette = true;
+                    self.begin_flow(command, window, cx);
+                } else {
+                    self.engine.report(
+                        crate::engine::StatusKind::Info,
+                        "Open the task board and select a task first.",
+                    );
+                }
+            }
             C::ShowDen => self.toggle_den(window, cx),
             C::GoHome => self.go_home(window, cx),
             C::EditDen => self.toggle_den_editor(window, cx),
@@ -3107,6 +3147,7 @@ impl Shell {
                 self.overlay = Overlay::None;
                 self.focus.focus(window, cx);
             }
+
             Overlay::AddProject | Overlay::NewWorktree => {
                 self.overlay = Overlay::None;
                 self.new_worktree_ui = None;
@@ -3506,6 +3547,9 @@ impl Shell {
                                 this.forget_row_drop();
                                 cx.notify();
                             }
+                            if this.forget_card_drop() {
+                                cx.notify();
+                            }
                         });
                     }
                 });
@@ -3517,6 +3561,10 @@ impl Shell {
                         released.update(cx, |this, cx| {
                             if this.row_drop_target.is_some() {
                                 this.finish_row_drop();
+                                cx.notify();
+                            }
+                            if this.tasks_ui.drop.is_some() || this.tasks_ui.dragging.is_some() {
+                                this.finish_card_drop();
                                 cx.notify();
                             }
                         });
@@ -3551,6 +3599,7 @@ impl Shell {
                     && !self.terminal_focused()
                     && !self.filter_focused(window, cx)
                     && !self.find_focused(window, cx)
+                    && !self.tasks_typing(window, cx)
             }
             _ => true,
         }

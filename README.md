@@ -576,6 +576,9 @@ platform (see below).
 | Settings | `⌘,` | `Ctrl+,` |
 | Show usage | `⇧⌘U` | `Ctrl+Shift+Alt+U` |
 | Refresh usage now | palette only | palette only |
+| Show the task board | `⇧⌘I` | `Ctrl+Shift+Alt+I` |
+| New task… | palette only | palette only |
+| Create worktree for the task… | palette only | palette only |
 | Go home | `⌥⇧⌘H` | `Ctrl+Shift+Alt+H` |
 | Open the Den | `⌥⇧⌘L` | `Ctrl+Shift+Alt+L` |
 | Edit the Den | palette only (`E` in the Den) | palette only (`E` in the Den) |
@@ -1562,6 +1565,62 @@ on this computer and nowhere else; nothing is captured automatically, terminals
 on other machines do not get it, and the window has no view of it yet.
 [`docs/MEMORY.md`](docs/MEMORY.md) has the whole of it.
 
+## A board of tasks
+
+Leon keeps a board of tasks per project, shared by all its git worktrees, that
+you and your agents both write to. An agent that finds work it does not do now
+creates a task; one that starts a task moves it to `doing`.
+
+```sh
+leon task add --priority high --label backend "Rotate the signing key"
+leon task list                    # open tasks, by column
+leon task board                   # the columns
+leon task move 1a2b3c4d doing
+leon task done 1a2b3c4d
+leon task search signing
+```
+
+`leon task mcp` serves the same board to an agent over MCP; register it in the
+agent's own configuration (`claude mcp add leon-tasks -- leon task mcp`).
+
+The window shows the board too, in the main pane with the sidebar beside it:
+the **Tasks** row under Home, `⇧⌘I` (`Ctrl+Shift+Alt+I`), or **Show the task
+board** in the palette. The columns are backlog, todo, doing, review and done.
+Drag a card with the pointer to any place of any column, or use the keys: the
+arrows (or `h` `j` `k` `l`) move the cursor, `Shift` with them carries the card,
+`n` (or the **+** of a column, or **New task**) opens the panel for a new task
+with the title ready to type, in the cursor's column, `d` finishes the
+card, `p` raises its priority and `g` switches between the project's board and
+the global one; the chips in the header change the project. What an agent
+writes from another process shows up within a couple of seconds.
+
+A click on a card (or `e`) opens its **details**, a panel that floats over the
+right edge of the board without moving the columns: the title, a description of several lines, who it is for, its
+status and priority, its labels, where its worktree is and every action in view
+(create the worktree, mark done, cancel, delete). What is typed is saved when you close
+the details or choose another card; `Cmd+Enter` (`Ctrl+Enter`) saves at once.
+
+**To code a task**, press `w` (or Enter, or **Create worktree** in the details):
+Leon asks which agent, makes a worktree named after the task
+(`fix-the-login-1a2b3c4d`), starts the agent in it with the task as its prompt,
+and moves the card to doing, **linked** to that worktree. The card then shows
+the branch and whether it is **active**: a dot and a phrase that follow the
+session in it (working, waiting for you, asks you, failed, at the prompt, or no
+session). The details show the same with the worktree's folder, and **Open
+worktree** and **Open session** take you there. The agent is told how to move
+the card to review when it is done. **Only a worktree** makes the worktree and
+opens a shell in it. A card that has a worktree opens it instead of making
+another.
+
+**GitHub issues.** The **GITHUB** chip in the header (or `s`) turns on syncing a
+project's tasks with the issues of its GitHub repository, through your own `gh`
+login. It names the repository and says what it will do before it does
+anything: it makes `status:*` and `priority:*` labels there, reads the issues
+(open ones become tasks) and keeps a task and its issue equal. An issue is
+opened only by **Create GitHub issue** on one card, and none is ever deleted.
+The sync with Linear is not here yet.
+[`docs/TASKS.md`](docs/TASKS.md) has the whole of it.
+
 ## Usage
 
 How much of each agent's limits is left, per machine. The footer under the main
@@ -2275,6 +2334,7 @@ exit status: a way to check the terminal against a real agent
 
 * [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): crates, rules, the terminal.
 * [`docs/MEMORY.md`](docs/MEMORY.md): the memory agents share, its command line, the block and MCP.
+* [`docs/TASKS.md`](docs/TASKS.md): the board of tasks, its command line and MCP tools.
 * [`docs/SETTINGS.md`](docs/SETTINGS.md) and [`docs/THEMES.md`](docs/THEMES.md): settings and themes.
 * [`docs/RELEASING.md`](docs/RELEASING.md): how a release is cut, signed and published.
 * [`docs/media/`](docs/media) and [`scripts/media/`](scripts/media): the screenshots and clips of this README, and how they are made.

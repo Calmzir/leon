@@ -806,6 +806,7 @@ impl Harness {
     fn main_kind(&self, cx: &mut TestAppContext) -> String {
         self.shell(cx, |shell| match &shell.main {
             Main::Empty => "empty".to_owned(),
+            Main::Tasks => "tasks".to_owned(),
             Main::Project(id) => format!(
                 "project:{}",
                 shell
@@ -5776,7 +5777,11 @@ mod live {
         // The card is the overlay's: elevated, anchored near the row.
         let menu = h.bounds_of("context-menu".to_owned(), cx).unwrap();
         let row = h.bounds_of(format!("tree-row-{at}"), cx).unwrap();
-        assert!(menu.top() >= row.top() - px(2.), "{menu:?} for {row:?}");
+        // At the row: below it, or moved up as far as the window needs.
+        assert!(
+            menu.top() <= row.bottom() && menu.bottom() >= row.top(),
+            "{menu:?} for {row:?}"
+        );
         // A click outside closes it.
         let layer = h.bounds_of("menu-layer".to_owned(), cx).unwrap();
         let mut visual = VisualTestContext::from_window(h.window.into(), cx);
@@ -7893,6 +7898,13 @@ mod tests_screen;
 #[cfg(leon_posix_tests)]
 #[path = "tests_usage.rs"]
 mod tests_usage;
+
+#[path = "tests_tasks.rs"]
+mod tests_tasks;
+
+#[cfg(leon_posix_tests)]
+#[path = "tests_task_work.rs"]
+mod tests_task_work;
 
 #[cfg(leon_posix_tests)]
 #[path = "tests_notify.rs"]

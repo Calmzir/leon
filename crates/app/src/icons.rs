@@ -46,6 +46,7 @@ icon_assets!(
         Server,
         Settings,
         Slash,
+        SquareKanban,
         Sun,
         Terminal,
         Trash,
@@ -227,6 +228,7 @@ mod tests {
             IconName::Pin,
             IconName::House,
             IconName::PawPrint,
+            IconName::SquareKanban,
         ] {
             let path = gpui_kit::assets::IconNamed::path(name);
             let loaded = Assets.load(&path).unwrap();
