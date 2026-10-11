@@ -46,7 +46,7 @@ export default function Settings() {
   }
 
   return (
-    <Screen kind="Leon" title="Settings">
+    <Screen kind="Leon" title="Settings" back={false} bottomInset={false}>
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 16 }}>
           <Section title="This device" style={PLAIN} />

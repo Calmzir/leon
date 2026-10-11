@@ -1,17 +1,19 @@
 // The computers this device paired with, and whether each is reachable.
 import Feather from '@expo/vector-icons/Feather';
-import { router } from 'expo-router';
-import { useMemo } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useMemo } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 
+import { lionsOf, tally } from '@/chat/den';
 import type { ChatRecord, ChatRow } from '@/chat/list';
 
 import { connectionWord } from '@/link/errors';
 import { useApp, type HostRecord } from '@/store/app';
-import { forgetHost, useRuntime } from '@/store/runtime';
+import { askDens, forgetHost, useRuntime } from '@/store/runtime';
 import { useTheme } from '@/theme/useTheme';
 import { connectionColor } from '@/ui/ConnectionBanner';
-import { Button, IconButton, Label, Led, Row, Rule, Screen, Section, Signature, Txt } from '@/ui/kit';
+import { Button, Label, Led, Row, Rule, Screen, Section, Signature, Txt } from '@/ui/kit';
+import { Lion } from '@/ui/Lion';
 import { Mark, Watermark } from '@/ui/Mark';
 import { SessionCell } from '@/ui/SessionCell';
 
@@ -23,6 +25,91 @@ function confirmRemove(host: HostRecord) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: () => forgetHost(host.hostId) },
     ],
+  );
+}
+
+/** How long after the first question the home asks the dens again: the first answer may hold nobody. */
+const DEN_AGAIN_MS = 4_000;
+
+/**
+ * The way into the Den, said with who is in it: a few of its lions, those
+ * that wait first, and the count. It is the one place of the home drawn in
+ * the accent.
+ */
+function DenCard() {
+  const t = useTheme();
+  const hosts = useApp((s) => s.hosts);
+  const dens = useRuntime((s) => s.dens);
+  const lions = useMemo(() => lionsOf(hosts, dens), [hosts, dens]);
+  const count = tally(lions);
+  const shown = lions.slice(0, 4);
+
+  useFocusEffect(
+    useCallback(() => {
+      void askDens();
+      const again = setTimeout(() => void askDens(), DEN_AGAIN_MS);
+      return () => clearTimeout(again);
+    }, []),
+  );
+
+  const waiting = count.waiting > 0;
+  const edge = waiting ? t.warning : t.signal;
+  const says =
+    count.live === 0
+      ? 'Every agent that is live on your computers, and what it is doing.'
+      : null;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        count.live === 0
+          ? 'The Den'
+          : `The Den, ${count.live} live, ${count.working} working, ${count.waiting} waiting for you`
+      }
+      accessibilityHint="Shows every agent that is live on your computers."
+      onPress={() => router.push('/den')}
+      style={({ pressed }) => ({
+        marginHorizontal: 12,
+        marginTop: 16,
+        backgroundColor: pressed ? t.surface2 : t.surface,
+        borderWidth: 1,
+        borderColor: edge,
+        borderLeftWidth: 3,
+      })}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingLeft: 14, paddingRight: 10 }}>
+        <View style={{ flex: 1, gap: 6 }}>
+          <Label style={{ color: edge }}>[ The Den ]</Label>
+          {says ? (
+            <Txt variant="small" tone="muted">
+              {says}
+            </Txt>
+          ) : (
+            <View style={{ gap: 3 }}>
+              <Txt variant="strong">
+                {waiting
+                  ? `${count.waiting} waiting for you`
+                  : count.working > 0
+                    ? `${count.working} working`
+                    : `${count.live} resting`}
+              </Txt>
+              <Label tone="faint">
+                {count.live} live · {count.working} working
+              </Label>
+            </View>
+          )}
+        </View>
+        {shown.length > 0 ? (
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+            {shown.map((lion, at) => (
+              <View key={lion.key} style={{ marginLeft: at === 0 ? 0 : -8, opacity: lion.mood === 'quiet' ? 0.55 : 1 }}>
+                <Lion cub={lion.cub} width={30} beat={0} />
+              </View>
+            ))}
+          </View>
+        ) : null}
+        <Feather name="chevron-right" size={18} color={edge} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -75,7 +162,6 @@ function folderName(path: string | undefined): string {
 }
 
 export default function Hosts() {
-  const t = useTheme();
   const hosts = useApp((s) => s.hosts);
   const chats = useApp((s) => s.chats);
   // What needs the person comes first, wherever it runs: an agent that asked
@@ -93,13 +179,10 @@ export default function Hosts() {
     const place = [host?.hostName, folderName(chat.cwd)].filter(Boolean).join(' / ');
     return <SessionCell key={chat.id} hostId={chat.hostId} row={asRow(chat)} where={place} />;
   };
-  const settings = (
-    <IconButton icon="settings" label="Settings" onPress={() => router.push('/settings')} />
-  );
 
   if (hosts.length === 0) {
     return (
-      <Screen title="Leon" brand back={false} right={settings}>
+      <Screen title="Leon" brand back={false} bottomInset={false}>
         <Watermark size={340} />
         <View style={{ flex: 1, padding: 24, justifyContent: 'center', gap: 14 }}>
           <Mark size={64} />
@@ -127,7 +210,7 @@ export default function Hosts() {
   }
 
   return (
-    <Screen title="Leon" brand back={false} right={settings}>
+    <Screen title="Leon" brand back={false} bottomInset={false}>
       <Watermark size={340} />
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 12 }}>
         {waiting.length > 0 ? (
@@ -148,31 +231,7 @@ export default function Hosts() {
             {recent.map(cell)}
           </>
         ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="The Den"
-          accessibilityHint="Shows every agent that is live on your computers."
-          onPress={() => router.push('/den')}
-          style={({ pressed }) => ({
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 12,
-            marginHorizontal: 12,
-            marginTop: 16,
-            paddingVertical: 12,
-            paddingHorizontal: 14,
-            backgroundColor: pressed ? t.surface2 : t.surface,
-            borderWidth: 1,
-            borderColor: pressed ? t.elevatedBorder : t.border,
-          })}>
-          <View style={{ flex: 1, gap: 3 }}>
-            <Label tone="muted">[ The Den ]</Label>
-            <Txt variant="small" tone="faint">
-              Every agent that is live on your computers, and what it is doing.
-            </Txt>
-          </View>
-          <Feather name="chevron-right" size={18} color={t.textMuted} />
-        </Pressable>
+        <DenCard />
         <Section title="Computers" right={<Label>{hosts.length}</Label>} />
         <Rule />
         {hosts.map((host) => (

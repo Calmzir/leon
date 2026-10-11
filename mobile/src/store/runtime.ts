@@ -437,24 +437,31 @@ const DEN_EVERY_MS = 3_000;
  * asked: it would drop the connection.
  */
 export function watchDens(): () => void {
-  return every(DEN_EVERY_MS, async () => {
-    const hosts = useApp.getState().hosts;
-    await Promise.all(
-      hosts.map(async ({ hostId }) => {
-        if (!inFront(hostId)) return;
-        const opened = ensureLink(hostId);
-        if (!opened) return;
-        if (!useRuntime.getState().shared[hostId]) await refreshShared(hostId, false);
-        if (!useRuntime.getState().shared[hostId]?.den) return;
-        try {
-          const cubs = await opened.den();
-          useRuntime.setState((s) => ({ dens: { ...s.dens, [hostId]: cubs } }));
-        } catch {
-          // Offline or busy: what was known stays until it answers again.
-        }
-      }),
-    );
-  });
+  return every(DEN_EVERY_MS, askDens);
+}
+
+/**
+ * Asks every computer that has a Den who is in it, once. The home asks when
+ * it comes to the front, so that its card says who waits; a computer works
+ * its Den out for a few seconds after being asked, and then stops.
+ */
+export async function askDens(): Promise<void> {
+  const hosts = useApp.getState().hosts;
+  await Promise.all(
+    hosts.map(async ({ hostId }) => {
+      if (!inFront(hostId)) return;
+      const opened = ensureLink(hostId);
+      if (!opened) return;
+      if (!useRuntime.getState().shared[hostId]) await refreshShared(hostId, false);
+      if (!useRuntime.getState().shared[hostId]?.den) return;
+      try {
+        const cubs = await opened.den();
+        useRuntime.setState((s) => ({ dens: { ...s.dens, [hostId]: cubs } }));
+      } catch {
+        // Offline or busy: what was known stays until it answers again.
+      }
+    }),
+  );
 }
 
 export function watchHost(hostId: string): () => void {

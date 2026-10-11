@@ -338,7 +338,13 @@ export function Screen({
       }}>
       <View style={styles.header}>
         {back ? (
-          <IconButton icon="chevron-left" label="Back" onPress={() => router.back()} color={t.text} />
+          <IconButton
+            icon="chevron-left"
+            label="Back"
+            // Opened from a link there is nothing behind this screen: home is.
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+            color={t.text}
+          />
         ) : (
           <View style={{ width: metrics.pad - 4 }} />
         )}

@@ -104,7 +104,7 @@ export default function Den() {
   const asked = online.every((host) => shared[host.hostId] !== undefined);
 
   return (
-    <Screen kind="Den" title="The Den">
+    <Screen kind="Den" title="The Den" back={false} bottomInset={false}>
       <View
         style={{
           flexDirection: 'row',
