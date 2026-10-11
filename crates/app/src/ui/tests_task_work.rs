@@ -54,6 +54,12 @@ fn board_with_a_task(
 ) -> (String, String) {
     h.press_chord("cmd-shift-i", "ctrl-shift-alt-i", cx);
     assert_eq!(h.main_kind(cx), "tasks");
+    // The tests wait on a clock they move far: the board's own sync, which
+    // the clock would set off, is not what they are about.
+    cx.update(|cx| {
+        h.shell
+            .update(cx, |shell, _| shell.tasks_ui.sync_every = u32::MAX)
+    });
     let root = match h.shell(cx, |s| s.tasks_ui.which.clone()) {
         Which::Project(root) => root,
         Which::Global => panic!("the board of the project was expected"),
@@ -331,4 +337,222 @@ fn a_branch_without_a_worktree_says_it_is_gone_and_offers_to_create_it_again(
     h.press("e", cx);
     assert!(h.shows("task-work-gone", cx));
     assert!(!h.shows("task-action-session", cx));
+}
+
+// ----- GitHub issues ------------------------------------------------------------------------
+//
+// Only the scripted runner is behind these: no `gh` runs and nothing is
+// written to GitHub.
+
+const REPO: &str = "zavudev/real";
+
+/// Scrolls the body of the card's details to its end with the wheel: the
+/// GitHub group is the last of it, and the actions below stay in view.
+fn scroll_the_details_down(h: &Harness, cx: &mut TestAppContext) {
+    use gpui_kit::{Modifiers, ScrollDelta, ScrollWheelEvent, TouchPhase};
+    let drawer = h.bounds_of("tasks-drawer".to_owned(), cx).unwrap();
+    let at = drawer.origin + gpui_kit::point(px(200.), px(150.));
+    let mut visual = VisualTestContext::from_window(h.window.into(), cx);
+    visual.simulate_event(ScrollWheelEvent {
+        position: at,
+        delta: ScrollDelta::Lines(gpui_kit::point(0.0, -60.0)),
+        modifiers: Modifiers::none(),
+        touch_phase: TouchPhase::Moved,
+    });
+    h.settle(cx);
+}
+
+fn calls_text(h: &Harness) -> Vec<String> {
+    h.runner
+        .calls()
+        .iter()
+        .map(|call| format!("{} {}", call.program, call.args.join(" ")))
+        .collect()
+}
+
+fn project_scope(h: &Harness, cx: &mut TestAppContext) -> MemoryScope {
+    match h.shell(cx, |s| s.tasks_ui.which.clone()) {
+        Which::Project(root) => MemoryScope::project(root),
+        Which::Global => panic!("the board of the project was expected"),
+    }
+}
+
+#[gpui_kit::test]
+fn turning_github_on_names_the_repository_first_and_writes_nothing_until_confirmed(
+    cx: &mut TestAppContext,
+) {
+    let h = open_live(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let _ = board_with_a_task(&h, "Fix the login", "", cx);
+    assert!(h.shows("tasks-github", cx));
+    // What gh says of the folder.
+    h.runner.queue(Output::ok(format!(
+        r#"{{"nameWithOwner":"{REPO}","url":"https://github.com/{REPO}"}}"#
+    )));
+    h.mouse_on("tasks-github".to_owned(), gpui_kit::MouseButton::Left, cx);
+    wait_until(&h, cx, "the repository", |h, cx| h.shows("github-repo", cx));
+    assert!(h.shows("github-on", cx));
+    // Only the question was asked: nothing was made in the repository.
+    assert_eq!(calls_text(&h), ["gh repo view --json nameWithOwner,url"]);
+    assert!(h.shell(cx, |s| s.tasks_ui.sync.config.is_none()));
+
+    // Confirmed: the eight labels, then one listing.
+    for _ in 0..8 {
+        h.runner.queue(Output::ok(String::new()));
+    }
+    h.runner.queue(Output::ok("[]".to_owned()));
+    h.mouse_on("github-on".to_owned(), gpui_kit::MouseButton::Left, cx);
+    wait_until(&h, cx, "sync to be on", |h, cx| {
+        h.shell(cx, |s| s.tasks_ui.sync.config.is_some())
+    });
+    let calls = calls_text(&h);
+    assert_eq!(calls.len(), 10, "{calls:?}");
+    assert!(calls[1].starts_with(&format!("gh label create status:backlog -R {REPO}")));
+    assert!(calls[9].starts_with(&format!("gh issue list -R {REPO}")));
+    assert!(!h.shows("tasks-github-panel", cx));
+}
+
+#[gpui_kit::test]
+fn a_folder_that_is_not_on_github_says_so_and_offers_nothing_to_turn_on(cx: &mut TestAppContext) {
+    let h = open_live(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let _ = board_with_a_task(&h, "Fix the login", "", cx);
+    h.runner.queue(Output::failed(
+        1,
+        "none of the git remotes configured for this repository point to a known GitHub host",
+    ));
+    h.mouse_on("tasks-github".to_owned(), gpui_kit::MouseButton::Left, cx);
+    wait_until(&h, cx, "the answer", |h, cx| h.shows("github-problem", cx));
+    assert!(!h.shows("github-on", cx));
+    assert_eq!(calls_text(&h).len(), 1, "only the question");
+}
+
+#[gpui_kit::test]
+fn a_linked_card_shows_its_issue_and_unlinking_leaves_the_issue_alone(cx: &mut TestAppContext) {
+    use leon_core::{SyncBase, TaskLink, TaskPriority};
+    let h = open_live(cx);
+    VisualTestContext::from_window(h.window.into(), cx)
+        .simulate_resize(gpui_kit::size(px(1400.), px(1000.)));
+    h.settle(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let (id, _short) = board_with_a_task(&h, "Fix the login", "", cx);
+    let scope = project_scope(&h, cx);
+    h.store
+        .enable_sync(&scope, leon_core::GITHUB, REPO, 1)
+        .unwrap();
+    h.store
+        .put_task_link(&TaskLink {
+            provider: leon_core::GITHUB.into(),
+            repo: REPO.into(),
+            number: 12,
+            url: format!("https://github.com/{REPO}/issues/12"),
+            task_id: Some(id.clone()),
+            base: SyncBase {
+                title: "Fix the login".into(),
+                body: String::new(),
+                status: TaskStatus::Todo,
+                priority: TaskPriority::None,
+                labels: Vec::new(),
+            },
+            remote_updated_at: String::new(),
+            body_cut: false,
+            synced_at: 1,
+        })
+        .unwrap();
+    // The board reads it, and says GitHub is on.
+    cx.executor().advance_clock(REFRESH * 2);
+    h.settle(cx);
+    assert!(h.shell(cx, |s| s.tasks_ui.sync.links.contains_key(&id)));
+    h.press("e", cx);
+    assert!(h.shows("task-github-linked", cx));
+    assert!(h.shows("task-github-open", cx));
+    assert!(!h.shows("task-github-create", cx));
+    // An issue is never opened for a linked card.
+    let before = calls_text(&h).len();
+    scroll_the_details_down(&h, cx);
+    h.mouse_on(
+        "task-github-unlink".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_until(&h, cx, "the link to go", |h, _| {
+        h.store.task_link(&id).unwrap().is_none()
+    });
+    assert_eq!(calls_text(&h).len(), before, "nothing was asked of GitHub");
+    // It is remembered, so the issue is not imported again.
+    assert_eq!(
+        h.store.task_links(leon_core::GITHUB, REPO).unwrap().len(),
+        1
+    );
+}
+
+#[gpui_kit::test]
+fn an_issue_is_opened_only_when_the_card_asks_and_only_when_sync_is_on(cx: &mut TestAppContext) {
+    let h = open_live(cx);
+    VisualTestContext::from_window(h.window.into(), cx)
+        .simulate_resize(gpui_kit::size(px(1400.), px(1000.)));
+    h.settle(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let (id, _short) = board_with_a_task(&h, "Rotate the key", "Before the month ends.", cx);
+    // Sync is off: the details say how to turn it on and offer no issue.
+    h.press("e", cx);
+    assert!(h.shows("task-github-off", cx));
+    assert!(!h.shows("task-github-create", cx));
+    h.press("escape", cx);
+
+    let scope = project_scope(&h, cx);
+    h.store
+        .enable_sync(&scope, leon_core::GITHUB, REPO, 1)
+        .unwrap();
+    cx.executor().advance_clock(REFRESH * 2);
+    h.settle(cx);
+    h.press("e", cx);
+    assert!(h.shows("task-github-unlinked", cx));
+    let before = calls_text(&h).len();
+    assert_eq!(
+        h.store.task_link(&id).unwrap(),
+        None,
+        "nothing was linked by itself"
+    );
+    h.runner
+        .queue(Output::ok(format!("https://github.com/{REPO}/issues/31\n")));
+    scroll_the_details_down(&h, cx);
+    h.mouse_on(
+        "task-github-create".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_until(&h, cx, "the issue", |h, _| {
+        h.store.task_link(&id).unwrap().is_some()
+    });
+    let calls = calls_text(&h);
+    let created: Vec<&String> = calls[before..]
+        .iter()
+        .filter(|call| call.contains("issue create"))
+        .collect();
+    assert_eq!(created.len(), 1, "{calls:?}");
+    assert!(created[0].contains(&format!("-R {REPO}")), "{}", created[0]);
+    assert!(
+        created[0].contains("--title=Rotate the key"),
+        "{}",
+        created[0]
+    );
+    assert_eq!(h.store.task_link(&id).unwrap().unwrap().number, 31);
+}
+
+#[gpui_kit::test]
+fn s_asks_before_turning_sync_on_and_syncs_when_it_is_on(cx: &mut TestAppContext) {
+    let h = open_live(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let _ = board_with_a_task(&h, "Fix the login", "", cx);
+    h.runner.queue(Output::ok(format!(
+        r#"{{"nameWithOwner":"{REPO}","url":"https://github.com/{REPO}"}}"#
+    )));
+    h.press("s", cx);
+    wait_until(&h, cx, "the question", |h, cx| h.shows("github-on", cx));
+    // Escape closes the question and the board is still there.
+    h.press("escape", cx);
+    assert!(!h.shows("tasks-github-panel", cx));
+    assert_eq!(h.main_kind(cx), "tasks");
+    assert!(h.shell(cx, |s| s.tasks_ui.sync.config.is_none()));
 }

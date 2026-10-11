@@ -766,6 +766,7 @@ impl Shell {
                     .child(field(text_input(&detail.label).into_any_element())),
             ))
             .child(group("WORK", work))
+            .child(group("GITHUB", self.github_group(&card, &c, cx)))
             .child(
                 div()
                     .text_size(metrics::TEXT_SMALL())

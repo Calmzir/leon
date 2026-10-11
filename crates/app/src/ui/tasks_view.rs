@@ -94,6 +94,14 @@ pub struct TasksUi {
     pub detail: Option<super::task_detail::DetailUi>,
     /// The panel for a new task, in the same place.
     pub create: Option<super::task_create::CreateUi>,
+    /// How the project is synced with GitHub, and which tasks are linked.
+    pub sync: super::task_github::SyncState,
+    /// The panel that asks before sync is turned on, or says how it stands.
+    pub sync_panel: Option<super::task_github::SyncPanel>,
+    /// Turns of the board's refresh since the last sync it asked for.
+    pub sync_ticks: u32,
+    /// How many turns pass between the syncs the open board asks for.
+    pub sync_every: u32,
     /// The loop that reads again while the board is open.
     refresher: Option<Task<()>>,
 }
@@ -122,6 +130,10 @@ impl Default for TasksUi {
             dragging: None,
             detail: None,
             create: None,
+            sync: super::task_github::SyncState::default(),
+            sync_panel: None,
+            sync_ticks: 0,
+            sync_every: super::task_github::SYNC_EVERY_TICKS,
             refresher: None,
         }
     }
@@ -262,6 +274,9 @@ impl Shell {
         self.home.nav = Some(Nav::Tasks);
         self.pane = Pane::Main;
         self.tasks_reload();
+        self.tasks_ui.sync_panel = None;
+        self.tasks_ui.sync_ticks = 0;
+        self.sync_now(cx);
         self.tasks_keep_fresh(cx);
         self.focus.focus(window, cx);
         cx.notify();
@@ -276,6 +291,7 @@ impl Shell {
         self.save_detail(cx);
         self.tasks_ui.detail = None;
         self.tasks_ui.create = None;
+        self.tasks_ui.sync_panel = None;
         self.tasks_ui.refresher = None;
         self.tasks_ui.follow_title = None;
         self.tasks_ui.drop = None;
@@ -398,6 +414,12 @@ impl Shell {
                     if this.tasks_reload() {
                         cx.notify();
                     }
+                    // The board syncs by itself now and then.
+                    this.tasks_ui.sync_ticks += 1;
+                    if this.tasks_ui.sync_ticks >= this.tasks_ui.sync_every {
+                        this.tasks_ui.sync_ticks = 0;
+                        this.sync_now(cx);
+                    }
                     true
                 })
                 .unwrap_or(false);
@@ -430,6 +452,7 @@ impl Shell {
                 let before = self.tasks_ui.board.clone();
                 self.tasks_ui.board.set_tasks(tasks);
                 let had_error = self.tasks_ui.error.take().is_some();
+                self.tasks_load_sync(&scope);
                 self.detail_reloaded();
                 before != self.tasks_ui.board || had_error
             }
@@ -496,6 +519,8 @@ impl Shell {
                 self.tasks_ui.drop = None;
                 self.tasks_ui.dragging = None;
                 cx.notify();
+            } else if self.tasks_ui.sync_panel.is_some() {
+                self.close_sync_panel(cx);
             } else if self.create_open() {
                 self.close_create(window, cx);
             } else if self.detail_open() {
@@ -504,6 +529,20 @@ impl Shell {
                 self.close_tasks(window, cx);
             }
             return true;
+        }
+        if self.tasks_ui.sync_panel.is_some() {
+            // The question about GitHub is answered with Enter or with the
+            // buttons; the board's other keys wait.
+            if stroke.key == "enter" && !other && !m.shift {
+                if self.github_on() {
+                    self.sync_now(cx);
+                    self.close_sync_panel(cx);
+                } else {
+                    self.turn_on_sync(cx);
+                }
+                return true;
+            }
+            return false;
         }
         if self.create_open() {
             // The panel for a new task is typing: its own keys, and nothing
@@ -526,6 +565,13 @@ impl Shell {
                 self.follow_detail(window, cx);
             }
             Action::Details => self.toggle_detail(window, cx),
+            Action::Sync => {
+                if self.github_on() {
+                    self.sync_now(cx);
+                } else {
+                    self.open_sync_panel(cx);
+                }
+            }
             Action::CardLeft
             | Action::CardRight
             | Action::CardUp
@@ -668,7 +714,8 @@ impl Shell {
                 .flex()
                 .child(main)
                 .children(self.render_detail(c, cx))
-                .children(self.render_create(c, cx)),
+                .children(self.render_create(c, cx))
+                .children(self.render_sync_panel(c, cx)),
         );
         root.child(self.tasks_footer(c)).into_any_element()
     }
@@ -716,6 +763,9 @@ impl Shell {
                     },
                 )),
             );
+        }
+        if let Some(github) = self.github_chip(c, cx) {
+            chips = chips.child(github);
         }
         chips = chips.child(
             chip(
@@ -971,7 +1021,10 @@ impl Shell {
         let stripe = priority_colour(task.priority, &c);
         let id = task.id.clone();
         let title = task.title.clone();
-        let meta = meta_of(task);
+        let mut meta = meta_of(task);
+        if let Some((number, _)) = self.tasks_ui.sync.links.get(&task.id) {
+            meta.push_str(&format!("  GH #{number}"));
+        }
         let ghost = (title.clone(), meta.clone());
         let agent = task
             .assignee
@@ -1208,6 +1261,7 @@ impl Shell {
             .child(hint("⇧", "carry the card"))
             .child(hint("drag", "move it anywhere"))
             .child(hint("e", "details"))
+            .child(hint("s", "sync with GitHub"))
             .child(hint("w", "create worktree"))
             .child(hint("n", "new"))
             .child(hint("d", "done"))

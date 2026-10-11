@@ -51,6 +51,7 @@ mod share;
 mod task_board;
 mod task_cli;
 mod task_mcp;
+mod task_sync;
 mod task_work;
 mod tasks;
 mod theme;

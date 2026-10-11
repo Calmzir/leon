@@ -65,6 +65,7 @@ mod sidebar;
 mod steps;
 mod task_create;
 mod task_detail;
+mod task_github;
 mod task_work;
 mod tasks_view;
 mod terminal_tools;

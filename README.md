@@ -1610,7 +1610,15 @@ session). The details show the same with the worktree's folder, and **Open
 worktree** and **Open session** take you there. The agent is told how to move
 the card to review when it is done. **Only a worktree** makes the worktree and
 opens a shell in it. A card that has a worktree opens it instead of making
-another. The sync with GitHub issues and Linear is not here yet.
+another.
+
+**GitHub issues.** The **GITHUB** chip in the header (or `s`) turns on syncing a
+project's tasks with the issues of its GitHub repository, through your own `gh`
+login. It names the repository and says what it will do before it does
+anything: it makes `status:*` and `priority:*` labels there, reads the issues
+(open ones become tasks) and keeps a task and its issue equal. An issue is
+opened only by **Create GitHub issue** on one card, and none is ever deleted.
+The sync with Linear is not here yet.
 [`docs/TASKS.md`](docs/TASKS.md) has the whole of it.
 
 ## Usage

@@ -50,6 +50,7 @@ use crate::files::{self, FileContent, FileEntry, FileError, FileRevision, GitMar
 use crate::project::{self, ProjectState};
 
 mod changes;
+mod task_sync;
 pub use changes::{CommitRequest, ShipReport, ShipRequest};
 
 /// How many folders are resolved with git at the same time while projects are
@@ -260,6 +261,30 @@ pub enum Op {
         assignee: Option<String>,
         /// What else is to be said in the line, such as why no setup ran.
         notice: Option<String>,
+    },
+    /// Turn on syncing a project's tasks with the issues of the GitHub
+    /// repository the person confirmed: make the marker labels there,
+    /// remember the repository, sync once.
+    EnableTaskSync {
+        /// The project.
+        project: ProjectId,
+        /// The repository, as `owner/name`.
+        repo: String,
+    },
+    /// Turn syncing off for a project; the links stay and nothing is changed
+    /// on GitHub.
+    DisableTaskSync(ProjectId),
+    /// Sync the tasks of a project with its repository's issues.
+    SyncTasks(ProjectId),
+    /// Open a GitHub issue for one task and link it.
+    CreateIssue {
+        /// The task.
+        id: String,
+    },
+    /// Detach a task from its issue.
+    UnlinkTask {
+        /// The task.
+        id: String,
     },
     /// Remove a task for good.
     DeleteTask {
@@ -652,6 +677,8 @@ struct Inner {
     /// The roots (by identity) asked about since Leon started: "not now" is
     /// not asked again in the same run.
     memory_asked: Mutex<std::collections::HashSet<String>>,
+    /// One sync of tasks at a time.
+    task_sync_lock: tokio::sync::Mutex<()>,
     /// Which network sources are switched on.
     usage_policy: Mutex<leon_usage::network::NetworkPolicy>,
     /// How many jobs run on the blocking pool right now. They run on threads
@@ -729,6 +756,7 @@ impl Engine {
                 ),
                 memory_offer: std::sync::atomic::AtomicBool::new(false),
                 memory_asked: Mutex::new(std::collections::HashSet::new()),
+                task_sync_lock: tokio::sync::Mutex::new(()),
                 usage_policy: Mutex::new(leon_usage::network::NetworkPolicy::default()),
                 blocking: std::sync::atomic::AtomicUsize::new(0),
                 local_posix_shell: std::sync::atomic::AtomicBool::new(
@@ -1778,6 +1806,13 @@ impl Engine {
             }
             Op::UpdateTask { id, patch } => self.update_task(&id, &patch).map(Some),
             Op::DeleteTask { id } => self.delete_task(&id).map(Some),
+            Op::EnableTaskSync { project, repo } => {
+                self.enable_task_sync(&project, &repo).await.map(Some)
+            }
+            Op::DisableTaskSync(project) => self.disable_task_sync(&project).map(Some),
+            Op::SyncTasks(project) => self.sync_tasks(&project).await.map(Some),
+            Op::CreateIssue { id } => self.create_issue_for(&id).await.map(Some),
+            Op::UnlinkTask { id } => self.unlink_task_issue(&id).map(Some),
             Op::StartTask {
                 id,
                 branch,
@@ -6227,6 +6262,385 @@ branch refs/heads/feature/login
             .await;
         assert!(status(&rig.engine).text.starts_with("Deleted "));
         assert!(rig.store.task(&task.id).is_err());
+    }
+
+    // ----- syncing tasks with GitHub issues ----------------------------------------------
+    //
+    // Only a scripted runner is behind these: no `gh` runs and nothing is
+    // written to GitHub. Every call is checked by its arguments.
+
+    const REPO: &str = "zavudev/api";
+
+    /// The arguments of the calls so far, `gh` left out.
+    fn gh_calls(rig: &Rig) -> Vec<String> {
+        rig.runner
+            .calls()
+            .iter()
+            .map(|call| {
+                assert_eq!(call.program, "gh");
+                call.args.join(" ")
+            })
+            .collect()
+    }
+
+    fn api_project(rig: &Rig) -> leon_core::Project {
+        rig.store
+            .add_project(&MachineId::local(), "api", "/srv/api")
+            .unwrap()
+    }
+
+    fn api_scope() -> leon_core::MemoryScope {
+        leon_core::MemoryScope::project("/srv/api")
+    }
+
+    fn issues_json(entries: &[&str]) -> Output {
+        Output::ok(format!("[{}]", entries.join(",")))
+    }
+
+    fn issue_json(number: i64, title: &str, labels: &[&str], state: &str) -> String {
+        let labels: Vec<String> = labels
+            .iter()
+            .map(|name| format!(r#"{{"name":"{name}"}}"#))
+            .collect();
+        format!(
+            r#"{{"number":{number},"url":"https://github.com/{REPO}/issues/{number}","title":"{title}","body":"","state":"{state}","stateReason":"","labels":[{}],"assignees":[],"updatedAt":"2026-10-10T10:00:00Z"}}"#,
+            labels.join(",")
+        )
+    }
+
+    #[tokio::test]
+    async fn turning_sync_on_makes_the_marker_labels_of_the_confirmed_repository_and_syncs() {
+        let mut runner = ScriptedRunner::new();
+        for _ in 0..8 {
+            runner = runner.reply(Output::ok(String::new()));
+        }
+        let rig = rig(runner.reply(issues_json(&[])));
+        let project = api_project(&rig);
+        rig.engine
+            .run(Op::EnableTaskSync {
+                project: project.id.clone(),
+                repo: REPO.into(),
+            })
+            .await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: everything is in sync."
+        );
+        let calls = gh_calls(&rig);
+        assert_eq!(calls.len(), 9, "{calls:?}");
+        for (call, label) in calls.iter().zip([
+            "status:backlog",
+            "status:todo",
+            "status:doing",
+            "status:review",
+            "priority:low",
+            "priority:medium",
+            "priority:high",
+            "priority:urgent",
+        ]) {
+            assert!(
+                call.starts_with(&format!("label create {label} -R {REPO} --force")),
+                "{call}"
+            );
+        }
+        assert!(calls[8].starts_with(&format!("issue list -R {REPO} --state all")));
+        let config = rig.store.sync_config(&api_scope()).unwrap().unwrap();
+        assert_eq!(config.repo, REPO);
+        assert!(config.last_ok_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_repository_that_is_not_owner_slash_name_turns_nothing_on() {
+        let rig = rig(ScriptedRunner::new());
+        let project = api_project(&rig);
+        rig.engine
+            .run(Op::EnableTaskSync {
+                project: project.id,
+                repo: "a/b; rm -rf /".into(),
+            })
+            .await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+        assert!(gh_calls(&rig).is_empty(), "nothing was asked of gh");
+        assert!(rig.store.sync_config(&api_scope()).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_sync_imports_open_issues_pushes_a_local_move_and_then_rests() {
+        let rig = rig(ScriptedRunner::new()
+            // The first run: issue 1 is the task's, 5 is new, 6 is closed.
+            .reply(issues_json(&[
+                &issue_json(1, "Fix the login", &["status:todo"], "OPEN"),
+                &issue_json(5, "Cache the sessions", &["bug", "status:review"], "OPEN"),
+                &issue_json(6, "Old", &[], "CLOSED"),
+            ]))
+            .reply(Output::ok(String::new())) // the marker label, made again
+            .reply(Output::ok(String::new())) // the edit
+            // The second run: what GitHub says now.
+            .reply(issues_json(&[
+                &issue_json(1, "Fix the login", &["status:doing"], "OPEN"),
+                &issue_json(5, "Cache the sessions", &["bug", "status:review"], "OPEN"),
+                &issue_json(6, "Old", &[], "CLOSED"),
+            ])));
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        // The task was linked when it was at todo, and moved to doing here.
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(api_scope(), "Fix the login"), 1)
+            .unwrap()
+            .into_task();
+        rig.store
+            .put_task_link(&leon_core::TaskLink {
+                provider: leon_core::GITHUB.into(),
+                repo: REPO.into(),
+                number: 1,
+                url: format!("https://github.com/{REPO}/issues/1"),
+                task_id: Some(task.id.clone()),
+                base: leon_core::SyncBase {
+                    title: "Fix the login".into(),
+                    body: String::new(),
+                    status: leon_core::TaskStatus::Todo,
+                    priority: leon_core::TaskPriority::None,
+                    labels: Vec::new(),
+                },
+                remote_updated_at: "2026-10-10T09:00:00Z".into(),
+                body_cut: false,
+                synced_at: 1,
+            })
+            .unwrap();
+        rig.store
+            .move_task(&task.id, leon_core::TaskStatus::Doing, None, 2)
+            .unwrap();
+
+        rig.engine.run(Op::SyncTasks(project.id.clone())).await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: 1 imported, 1 pushed."
+        );
+        let calls = gh_calls(&rig);
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(calls[1].starts_with(&format!("label create status:doing -R {REPO}")));
+        assert_eq!(
+            calls[2],
+            format!("issue edit 1 -R {REPO} --add-label=status:doing --remove-label=status:todo")
+        );
+        // Issue 5 is a task now, in review with its label; the closed issue
+        // and nothing else was left out.
+        let tasks = rig
+            .store
+            .tasks(&api_scope(), &leon_core::TaskFilter::default(), 10)
+            .unwrap();
+        assert_eq!(tasks.len(), 2);
+        let imported = tasks
+            .iter()
+            .find(|t| t.title == "Cache the sessions")
+            .unwrap();
+        assert_eq!(imported.status, leon_core::TaskStatus::Review);
+        assert_eq!(imported.labels, ["bug"]);
+        assert!(rig.store.task_link(&imported.id).unwrap().is_some());
+
+        // Syncing again, with GitHub as it now is, writes nothing anywhere.
+        let updated_before = rig.store.task(&task.id).unwrap().updated_at;
+        rig.engine.run(Op::SyncTasks(project.id)).await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: everything is in sync."
+        );
+        assert_eq!(gh_calls(&rig).len(), 4, "only the listing was asked");
+        assert_eq!(rig.store.task(&task.id).unwrap().updated_at, updated_before);
+        assert_eq!(
+            rig.store
+                .tasks(&api_scope(), &leon_core::TaskFilter::default(), 10)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn an_issue_whose_task_was_deleted_is_not_imported_again() {
+        let rig = rig(ScriptedRunner::new().reply(issues_json(&[&issue_json(
+            1,
+            "Fix the login",
+            &["status:todo"],
+            "OPEN",
+        )])));
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(api_scope(), "Fix the login"), 1)
+            .unwrap()
+            .into_task();
+        rig.store
+            .put_task_link(&leon_core::TaskLink {
+                provider: leon_core::GITHUB.into(),
+                repo: REPO.into(),
+                number: 1,
+                url: String::new(),
+                task_id: Some(task.id.clone()),
+                base: leon_core::SyncBase {
+                    title: "Fix the login".into(),
+                    body: String::new(),
+                    status: leon_core::TaskStatus::Todo,
+                    priority: leon_core::TaskPriority::None,
+                    labels: Vec::new(),
+                },
+                remote_updated_at: String::new(),
+                body_cut: false,
+                synced_at: 1,
+            })
+            .unwrap();
+        rig.store.delete_task(&task.id).unwrap();
+        rig.engine.run(Op::SyncTasks(project.id)).await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: everything is in sync."
+        );
+        assert!(rig
+            .store
+            .tasks(&api_scope(), &leon_core::TaskFilter::default(), 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_is_opened_only_for_the_card_asked_and_only_once() {
+        let rig = rig(ScriptedRunner::new().reply(Output::ok(format!(
+            "Creating issue in {REPO}\n\nhttps://github.com/{REPO}/issues/77\n"
+        ))));
+        let _project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        let mut new = leon_core::NewTask::titled(api_scope(), "Rotate the key");
+        new.body = "Before the month ends.".into();
+        new.priority = Some(leon_core::TaskPriority::High);
+        new.labels = vec!["Security".into()];
+        let task = rig.store.add_task(&new, 1).unwrap().into_task();
+        // An untouched task makes no issue by itself.
+        assert!(gh_calls(&rig).is_empty());
+
+        rig.engine
+            .run(Op::CreateIssue {
+                id: task.id.clone(),
+            })
+            .await;
+        assert!(
+            status(&rig.engine).text.starts_with("Opened issue #77"),
+            "{}",
+            status(&rig.engine).text
+        );
+        assert_eq!(
+            gh_calls(&rig),
+            [format!(
+                "issue create -R {REPO} --title=Rotate the key --body=Before the month ends. \
+                 --label=status:todo --label=priority:high --label=security"
+            )]
+        );
+        let link = rig.store.task_link(&task.id).unwrap().unwrap();
+        assert_eq!((link.repo.as_str(), link.number), (REPO, 77));
+        // A second ask is refused without asking GitHub.
+        rig.engine
+            .run(Op::CreateIssue {
+                id: task.id.clone(),
+            })
+            .await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+        assert_eq!(gh_calls(&rig).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn without_sync_turned_on_no_issue_is_opened() {
+        let rig = rig(ScriptedRunner::new());
+        let _project = api_project(&rig);
+        let task = rig
+            .store
+            .add_task(
+                &leon_core::NewTask::titled(api_scope(), "Rotate the key"),
+                1,
+            )
+            .unwrap()
+            .into_task();
+        rig.engine.run(Op::CreateIssue { id: task.id }).await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+        assert!(gh_calls(&rig).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_gh_that_is_not_signed_in_stops_the_run_with_one_sentence() {
+        let rig = rig(ScriptedRunner::new().reply(Output::failed(
+            4,
+            "To get started with GitHub CLI, please run:  gh auth login",
+        )));
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        rig.engine.run(Op::SyncTasks(project.id)).await;
+        let line = status(&rig.engine);
+        assert_eq!(line.kind, StatusKind::Error);
+        assert!(line.text.contains("gh auth login"), "{}", line.text);
+        let config = rig.store.sync_config(&api_scope()).unwrap().unwrap();
+        assert!(config.last_error.is_some());
+        assert_eq!(config.last_ok_at, None);
+    }
+
+    #[tokio::test]
+    async fn unlinking_leaves_the_issue_alone_and_turning_sync_off_keeps_the_links() {
+        let rig = rig(ScriptedRunner::new());
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(api_scope(), "Fix"), 1)
+            .unwrap()
+            .into_task();
+        let link = leon_core::TaskLink {
+            provider: leon_core::GITHUB.into(),
+            repo: REPO.into(),
+            number: 3,
+            url: String::new(),
+            task_id: Some(task.id.clone()),
+            base: leon_core::SyncBase {
+                title: "Fix".into(),
+                body: String::new(),
+                status: leon_core::TaskStatus::Todo,
+                priority: leon_core::TaskPriority::None,
+                labels: Vec::new(),
+            },
+            remote_updated_at: String::new(),
+            body_cut: false,
+            synced_at: 1,
+        };
+        rig.store.put_task_link(&link).unwrap();
+        rig.engine
+            .run(Op::UnlinkTask {
+                id: task.id.clone(),
+            })
+            .await;
+        assert!(status(&rig.engine)
+            .text
+            .contains("The issue was not changed"));
+        assert!(rig.store.task_link(&task.id).unwrap().is_none());
+        // It stays a tombstone: the issue is remembered.
+        assert_eq!(
+            rig.store.task_links(leon_core::GITHUB, REPO).unwrap().len(),
+            1
+        );
+        rig.engine.run(Op::DisableTaskSync(project.id)).await;
+        assert!(rig.store.sync_config(&api_scope()).unwrap().is_none());
+        assert_eq!(
+            rig.store.task_links(leon_core::GITHUB, REPO).unwrap().len(),
+            1
+        );
+        assert!(gh_calls(&rig).is_empty());
     }
 
     #[tokio::test]

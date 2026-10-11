@@ -63,6 +63,8 @@ pub enum Action {
     Start,
     /// Open the card's details to read and edit them, or close them.
     Details,
+    /// Sync with GitHub now, or ask to turn it on.
+    Sync,
 }
 
 /// The action of a key pressed while the board has the keyboard, or `None`
@@ -88,6 +90,7 @@ pub fn action_of(key: &str, shift: bool, other_modifier: bool) -> Option<Action>
         ("g", false) => Action::Scope,
         ("w" | "enter", false) => Action::Start,
         ("e", false) => Action::Details,
+        ("s", false) => Action::Sync,
         _ => return None,
     };
     Some(action)
@@ -475,6 +478,7 @@ mod tests {
             ("w", false, Action::Start),
             ("enter", false, Action::Start),
             ("e", false, Action::Details),
+            ("s", false, Action::Sync),
         ];
         for (key, shift, action) in table {
             assert_eq!(action_of(key, shift, false), Some(action), "{key} {shift}");

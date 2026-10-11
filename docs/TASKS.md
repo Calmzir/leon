@@ -7,7 +7,7 @@ them, and an MCP server so an agent can use them without a shell.
 The board is in the window (`⇧⌘I`, `Ctrl+Shift+Alt+I` elsewhere), in the
 command line (`leon task`) and in an MCP server (`leon task mcp`), all reading
 and writing the same database. The synchronisation with GitHub issues and
-Linear comes next and is not in Leon yet.
+Linear: GitHub issues are in (see below); Linear comes next and is not in Leon yet.
 
 Nothing here writes into a project or into an agent's configuration. `leon task
 mcp` is registered by the person who wants it.
@@ -80,6 +80,7 @@ nothing. Dropping a card where it already is changes nothing.
 | `w` or `Enter` | Create the card's worktree (see below), or open the one it has |
 | `e` | Open the card's details beside the columns, or close them |
 | `n` | Open the panel for a new task, in the cursor's column, with the title ready to type |
+| `s` | Sync with GitHub now, or ask to turn it on |
 | `d` | Finish the card |
 | `p` | Raise its priority: none, low, medium, high, urgent, none |
 | `g` | Switch between the project's board and the global one |
@@ -163,6 +164,73 @@ and says so wherever it is seen:
 
 `w` on a linked card opens the worktree instead of making another. The global
 board cannot create worktrees: it has no project to make one in.
+
+## GitHub issues
+
+A project can be synced with the issues of its GitHub repository, through the
+`gh` command line you are already signed in with (`gh auth login`). It is
+**off** until you turn it on, per project, and it only works for projects of
+this computer.
+
+### Turning it on
+
+The **GITHUB** chip in the header (or `s`) asks `gh` which repository the
+project's folder is and opens a panel that names it and says what will
+happen. Nothing is written until **Turn on**:
+
+* the labels `status:backlog`, `status:todo`, `status:doing`, `status:review`
+  and `priority:low` to `priority:urgent` are made in that repository;
+* its issues are read, and open ones become tasks;
+* from then on a task and its issue are kept equal.
+
+The repository you confirmed is remembered and named on every call (`-R`), so
+a fork never syncs with its upstream by accident. `Turn off` stops syncing and
+changes nothing on GitHub; the links stay.
+
+### What is kept equal
+
+| Task | Issue |
+| --- | --- |
+| done | closed |
+| canceled | closed as *not planned* |
+| backlog, todo, doing, review | open, with the label `status:<column>` |
+| priority low to urgent | the label `priority:<level>` |
+| other labels | the same labels (lower case) |
+| title, description | the same |
+| assignee | read from the issue into an empty one; never written (agents are not GitHub users) |
+
+An open issue with no `status:` label is `todo`. What a task cannot hold is
+cut and never written back: titles of more than 200 characters, more than ten
+labels, and a description of more than 20,000 characters (such a card says so
+and its description stays on GitHub).
+
+### How a conflict is decided
+
+Each link remembers what both sides said at the last sync. A field changed on
+one side only goes to the other; a field changed on both is decided by which
+was changed last; labels are merged as sets, so an addition or a removal on
+either side survives. Syncing twice with nothing changed in between writes
+nothing on either side. If a task is edited while a sync runs, that write is
+skipped and the pair is tried again at the next run.
+
+### When it runs
+
+When the board opens, every minute and a half while it is open, and on **Sync
+now** (`s`). A failure (`gh` missing, not signed in, offline) applies nothing
+and shows one line, such as `run gh auth login`.
+
+### What it never does
+
+* **Open an issue by itself.** An issue is opened by **Create GitHub issue** in
+  one card's details, and only for that card: agents write tasks too, and
+  those are not published on their own.
+* **Delete or close an issue you did not close** (a done task closes its
+  issue; a deleted task only unlinks it).
+* **Import a closed issue**, or import again an issue whose task you deleted or
+  unlinked (it is remembered).
+
+On a card the issue shows as `GH #12`; in its details the GitHub group has
+**Open on GitHub**, **Unlink** and, when it has none, **Create GitHub issue**.
 
 ## The command line
 

@@ -30,6 +30,17 @@
   the palette's **New task…** open it, and it takes the description, the
   column, the priority, the assignee and the labels before the task exists.
   `Esc` throws it away.
+* **GitHub issues**: a project's tasks can be synced with the issues of its
+  repository through your `gh` login. The chip in the header (or `s`) names the
+  repository and says what it will do before anything is written: it makes
+  `status:*` and `priority:*` labels there, reads the issues (open ones become
+  tasks) and keeps a task and its issue equal, field by field against what
+  both said at the last sync, so a change on one side goes to the other and a
+  conflict goes to the later change. It runs when the board opens, every
+  minute and a half, and on **Sync now**. An issue is opened only by **Create
+  GitHub issue** on one card, none is deleted, and a closed or unlinked issue
+  is not imported again. Cards show `GH #12`. See
+  [docs/TASKS.md](docs/TASKS.md).
 * The details of a card (a click on it, or `e`): a drawer over
   the right edge of the board (it moves nothing) to read and edit what a card cannot show: the title, a
   description of several lines, who it is for, status and priority, labels and
