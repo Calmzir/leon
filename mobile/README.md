@@ -20,12 +20,12 @@ exposed to React Native by [`modules/leon-link-native`](modules/leon-link-native
 | --- | --- |
 | `src/app` | the screens (Expo Router): computers, pairing (type, paste or scan the computer's QR; `leon://pair?code=…&relay=…` opens it filled in), chats of a computer, new chat, chat, settings |
 | `src/link` | the only code that touches the native module: `types.ts` (plain values), `native.ts` (the bindings behind them), `errors.ts` (what to tell the person) |
-| `src/chat` | pure logic with tests: turn events to chat rows, the chat list, merging a shared transcript |
+| `src/chat` | pure logic with tests: turn events to chat rows, the chat list, merging a shared transcript, the Den's lions |
 | `src/store` | `app.ts` (settings, paired computers, chats; persisted), `runtime.ts` (connections, turns in flight, messages), `alerts.ts` and `background.ts` (telling the person, in front and behind) |
 | `src/theme`, `src/ui` | the Leon theme from [`brand/tokens.md`](../brand/tokens.md) and the few components built on it |
 | `modules/leon-link-native` | the generated Turbo Module around the Rust crate |
 | `modules/leon-background` | Android only: the foreground service that keeps the link behind other apps, and the notifications |
-| `assets` | icon and splash, rendered from `brand/logo/final` |
+| `assets` | icon and splash, rendered from `brand/logo/final`; `assets/den`, the Den's lions, cut from the desktop's sheets by `scripts/den-lions.py` (their licence is beside them) |
 
 Built with Expo SDK 57 (React Native 0.86, New Architecture), Expo Router,
 Zustand, FlashList, react-native-keyboard-controller and

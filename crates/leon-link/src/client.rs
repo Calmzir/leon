@@ -34,7 +34,7 @@ use std::time::Duration;
 
 use leon_wire::relay::RelayErrorCode;
 use leon_wire::{
-    ErrorCode, ExecOutput, ExecSpec, Exit, FrameError, Grid, HostId, Message, PtyInfo,
+    ErrorCode, ExecOutput, ExecSpec, Exit, FrameError, Grid, HostId, Message, PtyInfo, SharedCub,
     SharedProject, SharedSession, SharedTranscript, WireError, MIN_CLIENT_PROTOCOL,
     PROTOCOL_VERSION,
 };
@@ -193,6 +193,9 @@ pub struct Shared {
     /// The sessions it has pinned, in the order of its Pinned section; none
     /// from a host that does not say.
     pub pinned: Vec<SharedSession>,
+    /// Whether it answers [`Client::share_den`]; a host that does not say
+    /// must not be asked.
+    pub den: bool,
 }
 
 /// How the connection is protected.
@@ -650,13 +653,25 @@ impl Client {
                 sessions,
                 truncated,
                 pinned,
+                den,
                 ..
             } => Ok(Shared {
                 projects,
                 sessions,
                 truncated,
                 pinned,
+                den,
             }),
+            _ => Err(ClientError::Protocol),
+        }
+    }
+
+    /// Asks the host who is in its Den now. Only for a host whose
+    /// [`Shared::den`] is set: one that does not know the question drops the
+    /// connection.
+    pub async fn share_den(&self) -> Result<Vec<SharedCub>, ClientError> {
+        match self.request(|id| Message::ShareDen { id }, None).await? {
+            Message::ShareDenData { cubs, .. } => Ok(cubs),
             _ => Err(ClientError::Protocol),
         }
     }
@@ -1188,6 +1203,7 @@ fn on_message(
             sessions,
             truncated,
             pinned,
+            den,
         } => {
             if let Some((reply, _)) = pending.remove(&id) {
                 let _ = reply.send(Ok(Message::ShareStateData {
@@ -1196,7 +1212,13 @@ fn on_message(
                     sessions,
                     truncated,
                     pinned,
+                    den,
                 }));
+            }
+        }
+        Message::ShareDenData { id, cubs } => {
+            if let Some((reply, _)) = pending.remove(&id) {
+                let _ = reply.send(Ok(Message::ShareDenData { id, cubs }));
             }
         }
         Message::ShareTranscriptData { id, transcript } => {

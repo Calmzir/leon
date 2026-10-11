@@ -214,6 +214,7 @@ interface NativeModuleInterface {
     uniffiSelf: bigint,
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
+  ubrn_uniffi_leon_mobile_fn_method_hostsession_den(uniffiSelf: bigint): bigint;
   ubrn_uniffi_leon_mobile_fn_method_hostsession_home_dir(
     uniffiSelf: bigint,
   ): bigint;
@@ -334,6 +335,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_leon_mobile_checksum_method_hostsession_agent_options(): number;
   ubrn_uniffi_leon_mobile_checksum_method_hostsession_attach_turn(): number;
   ubrn_uniffi_leon_mobile_checksum_method_hostsession_close(): number;
+  ubrn_uniffi_leon_mobile_checksum_method_hostsession_den(): number;
   ubrn_uniffi_leon_mobile_checksum_method_hostsession_home_dir(): number;
   ubrn_uniffi_leon_mobile_checksum_method_hostsession_host_name(): number;
   ubrn_uniffi_leon_mobile_checksum_method_hostsession_installed_agents(): number;

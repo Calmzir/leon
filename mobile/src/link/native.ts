@@ -276,8 +276,24 @@ function wrapSession(session: HostSessionLike): HostLink {
           truncated: shared.truncated,
           // An installed build older than the pins has no such field.
           pinned: (shared.pinned ?? []).map(historySession),
+          den: shared.den === true,
         };
       }),
+    den: () =>
+      guard(async () =>
+        (await session.den()).map((cub) => ({
+          id: cub.id.toString(),
+          name: cub.name,
+          agent: cub.agent,
+          state: cub.state,
+          detail: cub.detail,
+          level: cub.level,
+          parent: cub.parent?.toString(),
+          mystery: cub.mystery,
+          externalId: cub.externalId,
+          cwd: cub.cwd,
+        })),
+      ),
     transcript: (agent, externalId) =>
       guard(async () => {
         const entries = await session.transcript(agent, externalId);

@@ -191,6 +191,39 @@ pub struct SharedState {
     /// may be older than everything in `sessions`. None from a Leon that
     /// does not say.
     pub pinned: Vec<HistorySession>,
+    /// Whether it has a Den to show ([`HostSession::den`]). A Leon that does
+    /// not say has none, and must not be asked.
+    pub den: bool,
+}
+
+/// One lion of the other Leon's Den: a live agent session there, or a
+/// sub-agent of one, with what it is doing.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DenCub {
+    /// The lion's id over there, the same for as long as its session lives.
+    pub id: u64,
+    /// What its sidebar calls the session.
+    pub name: String,
+    /// Its agent's tag, such as `claude`; empty when not known.
+    pub agent: String,
+    /// What it is doing, as a tag: `editing`, `reading`, `searching`,
+    /// `running`, `web`, `delegating`, `planning`, `using-tool`, `thinking`,
+    /// `mystery`, `waiting-for-user`, `needs-permission`, `idle`, `asleep`,
+    /// `fainted` or `gone`. One not listed here is some kind of working.
+    pub state: String,
+    /// The plain fact: the file it edits, the command as typed.
+    pub detail: Option<String>,
+    /// How many tools it has used so far.
+    pub level: u32,
+    /// The lion that sent this one out, for a sub-agent.
+    pub parent: Option<u64>,
+    /// Nothing but working or quiet is known of it.
+    pub mystery: bool,
+    /// The agent's own id of its session, once known: with `agent`, the
+    /// session of the shared history it is.
+    pub external_id: Option<String>,
+    /// The folder it runs in.
+    pub cwd: Option<String>,
 }
 
 /// One message of a transcript.
@@ -350,7 +383,35 @@ impl HostSession {
                 sessions: shared.sessions.into_iter().map(history_session).collect(),
                 truncated: shared.truncated,
                 pinned: shared.pinned.into_iter().map(history_session).collect(),
+                den: shared.den,
             })
+        })
+        .await
+    }
+
+    /// Who is in the other Leon's Den now. Only for a Leon whose
+    /// [`SharedState::den`] is set: one that does not know the question
+    /// drops the connection. Asking is what keeps its Den worked out while
+    /// nobody looks at it there, so the first answer may hold nobody.
+    pub async fn den(&self) -> Result<Vec<DenCub>, MobileError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let cubs = client.share_den().await?;
+            Ok(cubs
+                .into_iter()
+                .map(|cub| DenCub {
+                    id: cub.id,
+                    name: cub.name,
+                    agent: cub.agent,
+                    state: cub.state,
+                    detail: cub.detail,
+                    level: cub.level,
+                    parent: cub.parent,
+                    mystery: cub.mystery,
+                    external_id: cub.external_id,
+                    cwd: cub.cwd,
+                })
+                .collect())
         })
         .await
     }

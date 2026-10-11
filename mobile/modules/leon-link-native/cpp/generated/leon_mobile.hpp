@@ -67,6 +67,9 @@ protected:
   jsi::Value cpp_uniffi_leon_mobile_fn_method_hostsession_close(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
+  jsi::Value cpp_uniffi_leon_mobile_fn_method_hostsession_den(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
   jsi::Value cpp_uniffi_leon_mobile_fn_method_hostsession_home_dir(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
@@ -343,6 +346,9 @@ protected:
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value cpp_uniffi_leon_mobile_checksum_method_hostsession_close(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value cpp_uniffi_leon_mobile_checksum_method_hostsession_den(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value cpp_uniffi_leon_mobile_checksum_method_hostsession_home_dir(

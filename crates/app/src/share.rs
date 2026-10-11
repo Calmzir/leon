@@ -26,7 +26,7 @@ use leon_host::{
     Approval, ApprovalRequest, Host, HostConfig, HostStatus, PairingInfo, ShareSource,
 };
 use leon_link::{DeviceRecord, Identity};
-use leon_wire::{SharedEntry, SharedProject, SharedSession, SharedTranscript};
+use leon_wire::{SharedCub, SharedEntry, SharedProject, SharedSession, SharedTranscript};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
@@ -45,6 +45,46 @@ pub const OWN_SESSIONS_OFFERED: usize = 500;
 /// and no error it may cause is worth a protocol message.
 struct StoreShare {
     store: Arc<Store>,
+    den: Arc<DenBoard>,
+}
+
+/// How long after a paired device last asked for the Den the window goes on
+/// working it out. A device that shows it asks every few seconds.
+pub const DEN_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The Den as paired devices read it: the lions the window last worked out,
+/// and when a device last asked for them.
+///
+/// The Den is the window's: only it sees the terminals. A device's question
+/// is answered from here, off the window's thread, with what the window last
+/// put; and that somebody asked is what tells the window to go on working
+/// the Den out while nobody looks at it on this computer.
+#[derive(Default)]
+pub struct DenBoard {
+    inner: Mutex<(Vec<SharedCub>, Option<std::time::Instant>)>,
+}
+
+impl DenBoard {
+    fn lock(&self) -> std::sync::MutexGuard<'_, (Vec<SharedCub>, Option<std::time::Instant>)> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The window says who is in the den now.
+    pub fn publish(&self, cubs: Vec<SharedCub>) {
+        self.lock().0 = cubs;
+    }
+
+    /// Whether a device asked for the Den within `span`.
+    pub fn asked_within(&self, span: std::time::Duration) -> bool {
+        self.lock().1.is_some_and(|at| at.elapsed() < span)
+    }
+
+    /// A device asks: it is noted, and it gets what the window last put.
+    fn ask(&self) -> Vec<SharedCub> {
+        let mut board = self.lock();
+        board.1 = Some(std::time::Instant::now());
+        board.0.clone()
+    }
 }
 
 impl ShareSource for StoreShare {
@@ -80,6 +120,14 @@ impl ShareSource for StoreShare {
             .into_iter()
             .map(shared)
             .collect()
+    }
+
+    fn den(&self) -> Option<Vec<SharedCub>> {
+        Some(self.den.ask())
+    }
+
+    fn has_den(&self) -> bool {
+        true
     }
 
     fn transcript(&self, agent: &str, external_id: &str) -> Option<SharedTranscript> {
@@ -131,6 +179,8 @@ pub struct ShareService {
     devices_file: PathBuf,
     /// What the paired devices may read of this Leon, while it is running.
     share: Arc<dyn ShareSource>,
+    /// The Den as the window last put it, for those devices.
+    den: Arc<DenBoard>,
     running: Mutex<Option<Running>>,
 }
 
@@ -150,13 +200,23 @@ impl ShareService {
         data_dir: &std::path::Path,
         store: Arc<Store>,
     ) -> Arc<Self> {
+        let den = Arc::new(DenBoard::default());
         Arc::new(Self {
             identity,
             handle,
             devices_file: data_dir.join("host").join("devices.json"),
-            share: Arc::new(StoreShare { store }),
+            share: Arc::new(StoreShare {
+                store,
+                den: den.clone(),
+            }),
+            den,
             running: Mutex::new(None),
         })
+    }
+
+    /// Where the window puts the Den for paired devices.
+    pub fn den_board(&self) -> &Arc<DenBoard> {
+        &self.den
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
@@ -369,7 +429,35 @@ mod tests {
     fn shared(dir: &std::path::Path) -> Arc<StoreShare> {
         Arc::new(StoreShare {
             store: Store::open(dir.join("leon.db")).unwrap(),
+            den: Arc::default(),
         })
+    }
+
+    #[test]
+    fn the_den_is_what_the_window_last_put_and_asking_is_noted() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = shared(dir.path());
+        let kept = std::time::Duration::from_secs(60);
+        assert!(shared.has_den());
+        assert!(!shared.den.asked_within(kept), "nobody asked yet");
+        // The first answer may hold nobody: the window has not put anything.
+        assert_eq!(shared.den(), Some(Vec::new()));
+        assert!(shared.den.asked_within(kept));
+        assert!(!shared.den.asked_within(std::time::Duration::ZERO));
+        let cub = SharedCub {
+            id: 3,
+            name: "fix the build".into(),
+            agent: "claude".into(),
+            state: "editing".into(),
+            detail: Some("Editing shell.rs".into()),
+            level: 2,
+            parent: None,
+            mystery: false,
+            external_id: Some("abc".into()),
+            cwd: Some("/srv/api".into()),
+        };
+        shared.den.publish(vec![cub.clone()]);
+        assert_eq!(shared.den(), Some(vec![cub]));
     }
 
     #[tokio::test]

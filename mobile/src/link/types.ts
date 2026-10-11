@@ -81,6 +81,38 @@ export type SharedState = {
    * Leon that does not say.
    */
   pinned: HistorySession[];
+  /** Whether that computer has a Den to show; one that does not say must not be asked. */
+  den: boolean;
+};
+
+/**
+ * One lion of a computer's Den: a live agent session there, or a sub-agent of
+ * one, with what it is doing as that computer's own Den says it.
+ */
+export type DenCub = {
+  /** The same for as long as its session lives. */
+  id: string;
+  name: string;
+  /** Its agent's tag; empty when not known. */
+  agent: string;
+  /**
+   * `editing`, `reading`, `searching`, `running`, `web`, `delegating`,
+   * `planning`, `using-tool`, `thinking`, `mystery`, `waiting-for-user`,
+   * `needs-permission`, `idle`, `asleep`, `fainted` or `gone`. One not
+   * listed is some kind of working.
+   */
+  state: string;
+  /** The plain fact: the file it edits, the command as typed. */
+  detail?: string;
+  /** How many tools it has used so far. */
+  level: number;
+  /** The lion that sent this one out, for a sub-agent. */
+  parent?: string;
+  /** Nothing but working or quiet is known of it. */
+  mystery: boolean;
+  /** With `agent`, the session of the shared history it is. */
+  externalId?: string;
+  cwd?: string;
 };
 
 /**
@@ -264,6 +296,8 @@ export interface HostLink {
   reconnectNow(): void;
   close(): void;
   shareState(): Promise<SharedState>;
+  /** Who is in that computer's Den now. Only when its `SharedState.den` is set. */
+  den(): Promise<DenCub[]>;
   transcript(agent: string, externalId: string): Promise<TranscriptEntry[] | undefined>;
   homeDir(): Promise<string>;
   subdirs(path: string): Promise<string[]>;

@@ -32,6 +32,7 @@ import {
   type ConnState,
   type HostLink,
   type LinkService,
+  type DenCub,
   type SharedState,
   type TurnEvent,
   type TurnHandle,
@@ -46,6 +47,8 @@ import { readJson, remove, writeJson } from './storage';
 type RuntimeState = {
   conn: Record<string, ConnState>;
   shared: Record<string, SharedState>;
+  /** Who is in each computer's Den, as it last said; absent for one without a Den. */
+  dens: Record<string, DenCub[]>;
   /** Installed agents per computer (catalogue tags). */
   installed: Record<string, string[]>;
   /** The git worktrees of each computer's shared projects, by project root. */
@@ -64,6 +67,7 @@ type RuntimeState = {
 export const useRuntime = create<RuntimeState>(() => ({
   conn: {},
   shared: {},
+  dens: {},
   installed: {},
   worktrees: {},
   messages: {},
@@ -156,6 +160,7 @@ export function forgetHost(hostId: string): void {
     return {
       conn: drop(s.conn, [hostId]),
       shared: drop(s.shared, [hostId]),
+      dens: drop(s.dens, [hostId]),
       installed: drop(s.installed, [hostId]),
       worktrees: drop(s.worktrees, [hostId]),
       messages: drop(s.messages, gone),
@@ -422,6 +427,36 @@ export function watchChat(chatId: string): () => void {
 }
 
 /** Reads a computer's sessions again while one of its lists is in front. */
+/** How often the Den in front asks each computer who is in it. */
+const DEN_EVERY_MS = 3_000;
+
+/**
+ * Follows the Den of every computer while its screen is in front. Asking is
+ * what keeps a computer working its Den out, so it stops when the screen is
+ * left. A computer that has no Den (an older Leon, a headless host) is not
+ * asked: it would drop the connection.
+ */
+export function watchDens(): () => void {
+  return every(DEN_EVERY_MS, async () => {
+    const hosts = useApp.getState().hosts;
+    await Promise.all(
+      hosts.map(async ({ hostId }) => {
+        if (!inFront(hostId)) return;
+        const opened = ensureLink(hostId);
+        if (!opened) return;
+        if (!useRuntime.getState().shared[hostId]) await refreshShared(hostId, false);
+        if (!useRuntime.getState().shared[hostId]?.den) return;
+        try {
+          const cubs = await opened.den();
+          useRuntime.setState((s) => ({ dens: { ...s.dens, [hostId]: cubs } }));
+        } catch {
+          // Offline or busy: what was known stays until it answers again.
+        }
+      }),
+    );
+  });
+}
+
 export function watchHost(hostId: string): () => void {
   let readings = 0;
   return every(LIST_EVERY_MS, async () => {

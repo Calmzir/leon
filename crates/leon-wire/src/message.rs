@@ -43,6 +43,8 @@ pub const SHARE_SESSIONS_LIMIT: usize = 500;
 /// How many pinned sessions a host offers at most in one
 /// [`Message::ShareStateData`]: the first ones of its Pinned section.
 pub const SHARE_PINNED_LIMIT: usize = 100;
+/// How many lions a host offers at most in one [`Message::ShareDenData`].
+pub const SHARE_DEN_LIMIT: usize = 200;
 
 const MAX_STRING: usize = 64 * 1024;
 /// The longest name of a program a [`Message::PtyProbed`] carries.
@@ -195,6 +197,36 @@ pub struct SharedSession {
     pub updated_ms: i64,
     /// How many messages the session holds on the host.
     pub messages: u32,
+}
+
+/// One lion of the host's Den: a live agent session, or a sub-agent of one,
+/// with what it is doing as the host's own Den says it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedCub {
+    /// The lion's id on the host, the same for as long as its session lives.
+    pub id: u64,
+    /// What the host's sidebar calls the session.
+    pub name: String,
+    /// Its agent's catalogue tag, such as `claude`; empty when not known.
+    pub agent: String,
+    /// What it is doing, as a tag: `editing`, `reading`, `searching`,
+    /// `running`, `web`, `delegating`, `planning`, `using-tool`, `thinking`,
+    /// `mystery`, `waiting-for-user`, `needs-permission`, `idle`, `asleep`,
+    /// `fainted` or `gone`. A reader takes a tag it does not know as working.
+    pub state: String,
+    /// The plain fact: the file it edits, the command as typed.
+    pub detail: Option<String>,
+    /// How many tools it has used so far.
+    pub level: u32,
+    /// The lion that sent this one out, for a sub-agent.
+    pub parent: Option<u64>,
+    /// Nothing but working or quiet is known of it: it has no transcript.
+    pub mystery: bool,
+    /// The agent's own id of its session, once known: with `agent`, what
+    /// names it in the host's history.
+    pub external_id: Option<String>,
+    /// The folder it runs in.
+    pub cwd: Option<String>,
 }
 
 /// One entry of a shared transcript.
@@ -377,6 +409,12 @@ pub enum Message {
         /// side keeps working, and the protocol version stays what it was.
         #[serde(default, deserialize_with = "tail")]
         pinned: Vec<SharedSession>,
+        /// Whether this host answers [`Message::ShareDen`]. After `pinned`
+        /// and read the same way: absent, it is `false`. A peer that does not
+        /// know a message drops the connection, so the Den is only asked of
+        /// a host that says this.
+        #[serde(default, deserialize_with = "tail")]
+        den: bool,
     },
     /// Asks for one history session's transcript.
     ShareTranscript {
@@ -433,6 +471,21 @@ pub enum Message {
     PtyTerminate {
         /// The terminal.
         pty: u64,
+    },
+    /// Asks for the host's Den: who is in it now. Only sent to a host whose
+    /// [`Message::ShareStateData`] said `den`.
+    ShareDen {
+        /// Request id.
+        id: u64,
+    },
+    /// The lions of the host's Den, the sessions before their sub-agents. A
+    /// host works them out while somebody asks: the first answer after a
+    /// while may hold nobody yet.
+    ShareDenData {
+        /// The request id.
+        id: u64,
+        /// Who is in the den.
+        cubs: Vec<SharedCub>,
     },
 }
 
@@ -521,6 +574,20 @@ impl Message {
                     }
                 }
                 shared_sessions(sessions)
+            }
+            Message::ShareDenData { cubs, .. } => {
+                if cubs.len() > SHARE_DEN_LIMIT {
+                    return Err(FrameError::OverLimit("den"));
+                }
+                for cub in cubs {
+                    let texts = [Some(&cub.name), Some(&cub.agent), Some(&cub.state)]
+                        .into_iter()
+                        .chain([&cub.detail, &cub.external_id, &cub.cwd].map(Option::as_ref));
+                    if texts.flatten().any(|text| text.len() > MAX_STRING) {
+                        return Err(FrameError::OverLimit("den"));
+                    }
+                }
+                Ok(())
             }
             Message::ShareTranscript {
                 agent, external_id, ..
@@ -746,6 +813,7 @@ mod tests {
                 sessions: vec![shared_session()],
                 truncated: false,
                 pinned: vec![],
+                den: false,
             },
             Message::ShareTranscript {
                 id: 8,
@@ -975,6 +1043,7 @@ mod tests {
             sessions: vec![shared_session()],
             truncated: false,
             pinned: vec![shared_session()],
+            den: false,
         };
         let bytes = encode_frame(&with_pins).unwrap();
         assert_eq!(decode_frame(&bytes).unwrap().0, with_pins);
@@ -1008,6 +1077,7 @@ mod tests {
                 sessions: vec![shared_session()],
                 truncated: false,
                 pinned: vec![],
+                den: false,
             }
         );
         // What an older client reads of a newer host: everything it knows.
@@ -1022,8 +1092,61 @@ mod tests {
             sessions: vec![],
             truncated: false,
             pinned: vec![shared_session(); SHARE_PINNED_LIMIT + 1],
+            den: false,
         };
         assert!(encode_frame(&many).is_err());
+    }
+
+    #[test]
+    fn the_den_round_trips_and_a_host_that_does_not_say_has_none() {
+        let cub = SharedCub {
+            id: 7,
+            name: "fix the build".into(),
+            agent: "claude".into(),
+            state: "needs-permission".into(),
+            detail: Some("Bash: cargo test".into()),
+            level: 12,
+            parent: None,
+            mystery: false,
+            external_id: Some("abc".into()),
+            cwd: Some("/code/leon".into()),
+        };
+        for message in [
+            Message::ShareDen { id: 4 },
+            Message::ShareDenData {
+                id: 4,
+                cubs: vec![cub.clone()],
+            },
+        ] {
+            let bytes = encode_frame(&message).unwrap();
+            assert_eq!(decode_frame(&bytes).unwrap().0, message);
+        }
+        let many = Message::ShareDenData {
+            id: 4,
+            cubs: vec![cub; SHARE_DEN_LIMIT + 1],
+        };
+        assert!(encode_frame(&many).is_err());
+
+        // A state that ends after the pins, as a host before the Den sends
+        // it, says there is no Den to ask for.
+        let with = Message::ShareStateData {
+            id: 1,
+            projects: vec![],
+            sessions: vec![],
+            truncated: false,
+            pinned: vec![],
+            den: true,
+        };
+        let mut payload = postcard::to_allocvec(&with).unwrap();
+        assert!(matches!(
+            postcard::from_bytes(&payload).unwrap(),
+            Message::ShareStateData { den: true, .. }
+        ));
+        payload.pop();
+        assert!(matches!(
+            postcard::from_bytes(&payload).unwrap(),
+            Message::ShareStateData { den: false, .. }
+        ));
     }
 
     #[test]
@@ -1038,6 +1161,7 @@ mod tests {
             sessions: vec![],
             truncated: false,
             pinned: vec![],
+            den: false,
         };
         assert!(encode_frame(&huge).is_err());
         let mut session = shared_session();
@@ -1049,6 +1173,7 @@ mod tests {
             sessions: vec![session],
             truncated: false,
             pinned: vec![],
+            den: false,
         };
         assert!(encode_frame(&wide).is_err());
     }

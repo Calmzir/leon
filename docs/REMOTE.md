@@ -51,6 +51,17 @@ For Leon hosts it adds a third, opt-out-free but read-only primitive:
   of its Pinned section, as a field added at the end of the message: a peer
   that does not know it stops reading before it, and an answer that ends
   before it reads as no pins, so an older Leon on either side keeps working.
+  After the pins, in the same way, it says whether this host has a Den.
+* **who is in its Den** (`ShareDen`): the live agent sessions of that
+  computer and their sub-agents, each with what it is doing as the host's own
+  Den says it (a state tag and the plain fact: the file it edits, the command
+  as typed) and, where known, the `(agent, external_id)` of its session. The
+  Den is the window's, which alone sees the terminals: the answer is what the
+  window last worked out, and that a device asked is what keeps it worked out
+  for the next twenty seconds while the Den is closed on that computer. So
+  the first answer after a while may hold nobody. The message is new, and a
+  peer that does not know a message drops the connection: it is only sent to
+  a host whose `ShareState` answer said it has a Den.
 
 Everything above those (git, probing, agents) is unchanged: a relay machine is
 just another machine.

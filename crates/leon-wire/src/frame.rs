@@ -639,6 +639,7 @@ mod tests {
                 }],
                 truncated: false,
                 pinned: vec![],
+                den: false,
             },
             Message::ShareTranscriptData {
                 id: 7,

@@ -650,6 +650,119 @@ const FfiConverterTypeChoiceQuestion = (() => {
 })();
 
 /**
+ * One lion of the other Leon's Den: a live agent session there, or a
+ * sub-agent of one, with what it is doing.
+ */
+export type DenCub = {
+  /**
+   * The lion's id over there, the same for as long as its session lives.
+   */
+  id: bigint;
+  /**
+   * What its sidebar calls the session.
+   */
+  name: string;
+  /**
+   * Its agent's tag, such as `claude`; empty when not known.
+   */
+  agent: string;
+  /**
+   * What it is doing, as a tag: `editing`, `reading`, `searching`,
+   * `running`, `web`, `delegating`, `planning`, `using-tool`, `thinking`,
+   * `mystery`, `waiting-for-user`, `needs-permission`, `idle`, `asleep`,
+   * `fainted` or `gone`. One not listed here is some kind of working.
+   */
+  state: string;
+  /**
+   * The plain fact: the file it edits, the command as typed.
+   */
+  detail?: string;
+  /**
+   * How many tools it has used so far.
+   */
+  level: number;
+  /**
+   * The lion that sent this one out, for a sub-agent.
+   */
+  parent?: bigint;
+  /**
+   * Nothing but working or quiet is known of it.
+   */
+  mystery: boolean;
+  /**
+   * The agent's own id of its session, once known: with `agent`, the
+   * session of the shared history it is.
+   */
+  externalId?: string;
+  /**
+   * The folder it runs in.
+   */
+  cwd?: string;
+};
+
+/**
+ * Generated factory for {@link DenCub} record objects.
+ */
+export const DenCub = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<DenCub, ReturnType<typeof defaults>>(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<DenCub>,
+  });
+})();
+
+const FfiConverterTypeDenCub = (() => {
+  type TypeName = DenCub;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        id: FfiConverterUInt64.readFromCursor(c),
+        name: FfiConverterString.readFromCursor(c),
+        agent: FfiConverterString.readFromCursor(c),
+        state: FfiConverterString.readFromCursor(c),
+        detail: FfiConverterOptionalString.readFromCursor(c),
+        level: FfiConverterUInt32.readFromCursor(c),
+        parent: FfiConverterOptionalUInt64.readFromCursor(c),
+        mystery: FfiConverterBool.readFromCursor(c),
+        externalId: FfiConverterOptionalString.readFromCursor(c),
+        cwd: FfiConverterOptionalString.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterUInt64.writeIntoCursor(value.id, c);
+      FfiConverterString.writeIntoCursor(value.name, c);
+      FfiConverterString.writeIntoCursor(value.agent, c);
+      FfiConverterString.writeIntoCursor(value.state, c);
+      FfiConverterOptionalString.writeIntoCursor(value.detail, c);
+      FfiConverterUInt32.writeIntoCursor(value.level, c);
+      FfiConverterOptionalUInt64.writeIntoCursor(value.parent, c);
+      FfiConverterBool.writeIntoCursor(value.mystery, c);
+      FfiConverterOptionalString.writeIntoCursor(value.externalId, c);
+      FfiConverterOptionalString.writeIntoCursor(value.cwd, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt64.allocationSize(value.id) +
+        FfiConverterString.allocationSize(value.name) +
+        FfiConverterString.allocationSize(value.agent) +
+        FfiConverterString.allocationSize(value.state) +
+        FfiConverterOptionalString.allocationSize(value.detail) +
+        FfiConverterUInt32.allocationSize(value.level) +
+        FfiConverterOptionalUInt64.allocationSize(value.parent) +
+        FfiConverterBool.allocationSize(value.mystery) +
+        FfiConverterOptionalString.allocationSize(value.externalId) +
+        FfiConverterOptionalString.allocationSize(value.cwd)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
  * A conversation in the other computer's history.
  */
 export type HistorySession = {
@@ -1283,6 +1396,11 @@ export type SharedState = {
    * does not say.
    */
   pinned: Array<HistorySession>;
+  /**
+   * Whether it has a Den to show ([`HostSession::den`]). A Leon that does
+   * not say has none, and must not be asked.
+   */
+  den: boolean;
 };
 
 /**
@@ -1311,6 +1429,7 @@ const FfiConverterTypeSharedState = (() => {
         sessions: FfiConverterSequenceTypeHistorySession.readFromCursor(c),
         truncated: FfiConverterBool.readFromCursor(c),
         pinned: FfiConverterSequenceTypeHistorySession.readFromCursor(c),
+        den: FfiConverterBool.readFromCursor(c),
       };
     }
     writeIntoCursor(value: TypeName, c: Cursor): void {
@@ -1318,13 +1437,15 @@ const FfiConverterTypeSharedState = (() => {
       FfiConverterSequenceTypeHistorySession.writeIntoCursor(value.sessions, c);
       FfiConverterBool.writeIntoCursor(value.truncated, c);
       FfiConverterSequenceTypeHistorySession.writeIntoCursor(value.pinned, c);
+      FfiConverterBool.writeIntoCursor(value.den, c);
     }
     allocationSize(value: TypeName): number {
       return (
         FfiConverterSequenceTypeProject.allocationSize(value.projects) +
         FfiConverterSequenceTypeHistorySession.allocationSize(value.sessions) +
         FfiConverterBool.allocationSize(value.truncated) +
-        FfiConverterSequenceTypeHistorySession.allocationSize(value.pinned)
+        FfiConverterSequenceTypeHistorySession.allocationSize(value.pinned) +
+        FfiConverterBool.allocationSize(value.den)
       );
     }
   }
@@ -4935,6 +5056,13 @@ export interface HostSessionLike {
    */
   close(): void;
   /**
+   * Who is in the other Leon's Den now. Only for a Leon whose
+   * [`SharedState::den`] is set: one that does not know the question
+   * drops the connection. Asking is what keeps its Den worked out while
+   * nobody looks at it there, so the first answer may hold nobody.
+   */
+  den(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<Array<DenCub>>;
+  /**
    * The home folder of the user the other computer runs Leon as: where to
    * work when it shares no project.
    */
@@ -5184,6 +5312,61 @@ export class HostSession
       },
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
+  }
+
+  /**
+   * Who is in the other Leon's Den now. Only for a Leon whose
+   * [`SharedState::den`] is set: one that does not know the question
+   * drops the connection. Asking is what keeps its Den worked out while
+   * nobody looks at it there, so the first answer may hold nobody.
+   */
+  async den(asyncOpts_?: {
+    signal: AbortSignal;
+  }): Promise<Array<DenCub>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_leon_mobile_fn_method_hostsession_den(
+            uniffiTypeHostSessionObjectFactory.clonePointer(this),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_leon_mobile_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_leon_mobile_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_leon_mobile_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_leon_mobile_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        // Borrowed view over foreign memory: the call site owns the free,
+        // as on the sync paths. Unconditional — a no-op where buffers are
+        // already JS-owned.
+        /*liftFunc:*/ (__rb) => {
+          try {
+            return FfiConverterSequenceTypeDenCub.lift(__rb);
+          } finally {
+            nativeModule().rustbuffer_free(__rb);
+          }
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeMobileError.lift.bind(
+          FfiConverterTypeMobileError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
   }
 
   /**
@@ -6262,6 +6445,9 @@ const FfiConverterSequenceTypeChoiceOption = new FfiConverterArray(
   FfiConverterTypeChoiceOption,
 );
 
+// FfiConverter for bigint | undefined
+const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
+
 // FfiConverter for LogoImage | undefined
 const FfiConverterOptionalTypeLogoImage = new FfiConverterOptional(
   FfiConverterTypeLogoImage,
@@ -6300,8 +6486,10 @@ const FfiConverterOptionalFloat64 = new FfiConverterOptional(
   FfiConverterFloat64,
 );
 
-// FfiConverter for bigint | undefined
-const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
+// FfiConverter for Array<DenCub>
+const FfiConverterSequenceTypeDenCub = new FfiConverterArray(
+  FfiConverterTypeDenCub,
+);
 
 // FfiConverter for number | undefined
 const FfiConverterOptionalUInt16 = new FfiConverterOptional(FfiConverterUInt16);
@@ -6391,6 +6579,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_leon_mobile_checksum_method_hostsession_close",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_leon_mobile_checksum_method_hostsession_den() !==
+    52588
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_leon_mobile_checksum_method_hostsession_den",
     );
   }
   if (
@@ -6626,6 +6822,7 @@ export default Object.freeze({
     FfiConverterTypeChoiceQuestion,
     FfiConverterTypeCodeCheck,
     FfiConverterTypeConnectionState,
+    FfiConverterTypeDenCub,
     FfiConverterTypeHistorySession,
     FfiConverterTypeHostSession,
     FfiConverterTypeLeonMobile,

@@ -2,7 +2,7 @@
 import Feather from '@expo/vector-icons/Feather';
 import { router } from 'expo-router';
 import { useMemo } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 
 import type { ChatRecord, ChatRow } from '@/chat/list';
 
@@ -75,6 +75,7 @@ function folderName(path: string | undefined): string {
 }
 
 export default function Hosts() {
+  const t = useTheme();
   const hosts = useApp((s) => s.hosts);
   const chats = useApp((s) => s.chats);
   // What needs the person comes first, wherever it runs: an agent that asked
@@ -147,6 +148,31 @@ export default function Hosts() {
             {recent.map(cell)}
           </>
         ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="The Den"
+          accessibilityHint="Shows every agent that is live on your computers."
+          onPress={() => router.push('/den')}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            marginHorizontal: 12,
+            marginTop: 16,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+            backgroundColor: pressed ? t.surface2 : t.surface,
+            borderWidth: 1,
+            borderColor: pressed ? t.elevatedBorder : t.border,
+          })}>
+          <View style={{ flex: 1, gap: 3 }}>
+            <Label tone="muted">[ The Den ]</Label>
+            <Txt variant="small" tone="faint">
+              Every agent that is live on your computers, and what it is doing.
+            </Txt>
+          </View>
+          <Feather name="chevron-right" size={18} color={t.textMuted} />
+        </Pressable>
         <Section title="Computers" right={<Label>{hosts.length}</Label>} />
         <Rule />
         {hosts.map((host) => (

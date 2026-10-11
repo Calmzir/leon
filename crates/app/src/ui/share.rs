@@ -242,6 +242,8 @@ impl Shell {
                 }
             }
         }
+        // A paired device that looks at the Den keeps it worked out.
+        self.den_serve(cx);
         if self.overlay == Overlay::Share {
             cx.notify();
         }

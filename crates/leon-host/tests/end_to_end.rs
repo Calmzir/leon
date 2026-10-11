@@ -549,6 +549,29 @@ impl ShareSource for FakeShare {
         self.sessions.clone()
     }
 
+    fn den(&self) -> Option<Vec<leon_wire::SharedCub>> {
+        Some(
+            (0..leon_wire::SHARE_DEN_LIMIT as u64 + 2)
+                .map(|id| leon_wire::SharedCub {
+                    id,
+                    name: format!("lion {id}"),
+                    agent: "claude".into(),
+                    state: "editing".into(),
+                    detail: Some("Editing shell.rs".into()),
+                    level: 3,
+                    parent: None,
+                    mystery: false,
+                    external_id: Some(format!("a{id}")),
+                    cwd: Some("/srv/code".into()),
+                })
+                .collect(),
+        )
+    }
+
+    fn has_den(&self) -> bool {
+        true
+    }
+
     fn pinned(&self) -> Vec<SharedSession> {
         // More than a host hands over, and older than everything it lists.
         (0..leon_wire::SHARE_PINNED_LIMIT + 3)
@@ -633,6 +656,7 @@ async fn a_paired_client_sees_what_the_host_shares_of_itself() {
         sessions,
         truncated,
         pinned,
+        den,
     } = client.share_state().await.unwrap();
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].root, "/srv/api");
@@ -649,6 +673,11 @@ async fn a_paired_client_sees_what_the_host_shares_of_itself() {
     assert_eq!(pinned.len(), leon_wire::SHARE_PINNED_LIMIT);
     assert_eq!(pinned[0].external_id, "p0");
     assert_eq!(pinned[1].agent, "codex");
+    // It says it has a Den, and answers with it, cut at its limit.
+    assert!(den);
+    let cubs = client.share_den().await.unwrap();
+    assert_eq!(cubs.len(), leon_wire::SHARE_DEN_LIMIT);
+    assert_eq!((cubs[0].id, cubs[0].state.as_str()), (0, "editing"));
     let transcript = client
         .share_transcript("claude", "a1")
         .await

@@ -500,6 +500,28 @@ fn working_state(kind: ToolKind) -> CubState {
     }
 }
 
+/// A state as a paired device is told it: a tag that stays the same.
+pub fn state_tag(state: CubState) -> &'static str {
+    match state {
+        CubState::Editing => "editing",
+        CubState::Reading => "reading",
+        CubState::Searching => "searching",
+        CubState::Running => "running",
+        CubState::Web => "web",
+        CubState::Delegating => "delegating",
+        CubState::Planning => "planning",
+        CubState::UsingTool => "using-tool",
+        CubState::Thinking => "thinking",
+        CubState::Mystery => "mystery",
+        CubState::WaitingForUser => "waiting-for-user",
+        CubState::NeedsPermission => "needs-permission",
+        CubState::Idle => "idle",
+        CubState::Asleep => "asleep",
+        CubState::Fainted => "fainted",
+        CubState::Gone => "gone",
+    }
+}
+
 /// The state of a session and the plain truth about it: the table of this
 /// module's documentation.
 pub fn state(facts: &Facts, pulse: Option<&Pulse>) -> (CubState, Option<String>) {
@@ -1015,6 +1037,21 @@ pub fn changes(
         }
     }
     told
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::*;
+
+    #[test]
+    fn every_state_has_a_tag_of_its_own() {
+        let tags: std::collections::HashSet<&str> = CubState::ALL
+            .iter()
+            .map(|state| state_tag(*state))
+            .collect();
+        assert_eq!(tags.len(), CubState::ALL.len());
+        assert_eq!(state_tag(CubState::NeedsPermission), "needs-permission");
+    }
 }
 
 #[cfg(test)]

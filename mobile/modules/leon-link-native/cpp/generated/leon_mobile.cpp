@@ -137,6 +137,8 @@ void uniffi_leon_mobile_fn_free_hostsession(
     /*handle*/ uint64_t ptr, uint64_t pty, uint64_t listener);
 void uniffi_leon_mobile_fn_method_hostsession_close(
     /*handle*/ uint64_t ptr, RustCallStatus *uniffi_out_err);
+/*handle*/ uint64_t uniffi_leon_mobile_fn_method_hostsession_den(
+    /*handle*/ uint64_t ptr);
 /*handle*/ uint64_t uniffi_leon_mobile_fn_method_hostsession_home_dir(
     /*handle*/ uint64_t ptr);
 RustBuffer uniffi_leon_mobile_fn_method_hostsession_host_name(
@@ -321,6 +323,7 @@ uint16_t uniffi_leon_mobile_checksum_method_leonmobile_pair();
 uint16_t uniffi_leon_mobile_checksum_method_hostsession_agent_options();
 uint16_t uniffi_leon_mobile_checksum_method_hostsession_attach_turn();
 uint16_t uniffi_leon_mobile_checksum_method_hostsession_close();
+uint16_t uniffi_leon_mobile_checksum_method_hostsession_den();
 uint16_t uniffi_leon_mobile_checksum_method_hostsession_home_dir();
 uint16_t uniffi_leon_mobile_checksum_method_hostsession_host_name();
 uint16_t uniffi_leon_mobile_checksum_method_hostsession_installed_agents();
@@ -2694,6 +2697,17 @@ NativeLeonMobile::NativeLeonMobile(
             return this->cpp_uniffi_leon_mobile_fn_method_hostsession_close(
                 rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_leon_mobile_fn_method_hostsession_den"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_leon_mobile_fn_method_hostsession_den"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_leon_mobile_fn_method_hostsession_den(
+                rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_leon_mobile_fn_method_hostsession_home_dir"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -3650,6 +3664,17 @@ NativeLeonMobile::NativeLeonMobile(
                 ->cpp_uniffi_leon_mobile_checksum_method_hostsession_close(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_leon_mobile_checksum_method_hostsession_den"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_leon_mobile_checksum_method_hostsession_den"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_leon_mobile_checksum_method_hostsession_den(
+                rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_leon_mobile_checksum_method_hostsession_home_dir"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -4408,6 +4433,16 @@ jsi::Value NativeLeonMobile::cpp_uniffi_leon_mobile_fn_method_hostsession_close(
       rt, callInvoker, status, args[count - 1]);
 
   return jsi::Value::undefined();
+}
+jsi::Value NativeLeonMobile::cpp_uniffi_leon_mobile_fn_method_hostsession_den(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  auto value = uniffi_leon_mobile_fn_method_hostsession_den(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
 }
 jsi::Value
 NativeLeonMobile::cpp_uniffi_leon_mobile_fn_method_hostsession_home_dir(
@@ -5421,6 +5456,14 @@ NativeLeonMobile::cpp_uniffi_leon_mobile_checksum_method_hostsession_close(
     jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
     size_t count) {
   auto value = uniffi_leon_mobile_checksum_method_hostsession_close();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value
+NativeLeonMobile::cpp_uniffi_leon_mobile_checksum_method_hostsession_den(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  auto value = uniffi_leon_mobile_checksum_method_hostsession_den();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
