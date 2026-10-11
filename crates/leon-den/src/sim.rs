@@ -181,6 +181,11 @@ pub enum NoteTone {
     /// What the user is asked: it stands out, and is the last to be left
     /// out of a card that has no room.
     Urgent,
+    /// What the agent last said, in its own words: where it left off. It is
+    /// read before the facts and kept longer than them.
+    Said,
+    /// A rule between two groups: it has no text.
+    Rule,
 }
 
 /// A line the host adds to a truth card.
@@ -214,6 +219,22 @@ impl Note {
         Self {
             text: text.into(),
             tone: NoteTone::Urgent,
+        }
+    }
+
+    /// What the agent last said.
+    pub fn said(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            tone: NoteTone::Said,
+        }
+    }
+
+    /// A rule between two groups of lines.
+    pub fn rule() -> Self {
+        Self {
+            text: String::new(),
+            tone: NoteTone::Rule,
         }
     }
 }
@@ -949,6 +970,7 @@ impl Den {
             Event::ToolFinished {
                 kind: ToolKind::Run,
                 ok: true,
+                ..
             } => Some(Bubble::Tick),
             _ => None,
         };

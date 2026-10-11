@@ -26,8 +26,9 @@
 //! ([`super::den_post`] says when that is, and why never into a question).
 //! A session that runs elsewhere has no terminal here: it is only opened.
 //!
-//! The truth card says what a lion asks, in full, and ends with a summary
-//! of the session in two groups, made of facts alone
+//! The truth card says what a lion asks, in full, then where its session
+//! left off: what the agent last said, what the user last asked, and the
+//! facts of the session, a rule between the groups
 //! ([`super::den::notes`]). Leon types no answer to a question or a
 //! permission prompt: Enter opens the terminal, where it is answered.
 //!
@@ -111,6 +112,13 @@ pub struct DenUi {
     /// When each followed transcript was last written, in seconds since the
     /// Unix epoch.
     written: HashMap<u64, i64>,
+    /// The end of a session's conversation as the history holds it, for the
+    /// card of a session whose transcript says nothing of it: by the
+    /// session's id in the history, with how many messages it had and when
+    /// it was last written when this was read (it is read again when either
+    /// changes) and when the agent's message was written, in seconds since
+    /// the Unix epoch.
+    recalled: HashMap<leon_core::SessionId, Remembered>,
     /// The Den was just opened: what the next poll reads is what happened
     /// while it was closed, to be summed up and not told line by line.
     catching_up: bool,
@@ -137,6 +145,11 @@ pub struct DenUi {
     pub(super) cast_round: usize,
     pub(super) cast_loop: Option<gpui_kit::Task<()>>,
 }
+
+/// What was read of a session's history for its card: how many messages it
+/// had and when it was last written at that time, the end of its
+/// conversation, and when the agent's last message was written.
+type Remembered = ((u32, i64), den::Recalled, Option<i64>);
 
 impl DenUi {
     /// Whether no loop reads transcripts now.
@@ -1548,8 +1561,68 @@ impl Shell {
         .detach();
     }
 
+    /// Reads from the history the end of the conversation of every live
+    /// session whose transcript says nothing of it (an agent Leon does not
+    /// follow, a remote session), off the window's thread: its card then
+    /// says where it left off as of the last import. Read once, and again
+    /// when the history holds more messages of it.
+    fn den_recall(&mut self, cx: &mut Context<Self>) {
+        let mut wanted = Vec::new();
+        for session in self.live.all() {
+            if self
+                .den_reading(session.id.0)
+                .is_some_and(|reading| reading.last_words.is_some())
+            {
+                continue;
+            }
+            let Some(stored) = self.history_of_live(session.id).and_then(|history| {
+                self.snapshot
+                    .sessions
+                    .iter()
+                    .find(|stored| stored.id == history)
+            }) else {
+                continue;
+            };
+            let stamp = (stored.message_count, stored.updated_at.timestamp_millis());
+            let read = self.den.recalled.get(&stored.id);
+            if read.is_none_or(|(read, ..)| *read != stamp) {
+                wanted.push((stored.id.clone(), stamp));
+            }
+        }
+        for (id, stamp) in wanted {
+            // What was read before stays on the card until the new is in.
+            let entry = self.den.recalled.entry(id.clone()).or_default();
+            entry.0 = stamp;
+            let store = self.engine.store().clone();
+            cx.spawn(async move |this, cx| {
+                let wanted = id.clone();
+                let (said, asked) = cx
+                    .background_spawn(async move {
+                        (
+                            store.session_last_message(&wanted, leon_core::Role::Assistant),
+                            store.session_last_message(&wanted, leon_core::Role::User),
+                        )
+                    })
+                    .await;
+                this.update(cx, |this, cx| {
+                    let said = said.ok().flatten();
+                    let at = said.as_ref().map(|said| said.at.timestamp());
+                    let recalled = den::Recalled {
+                        said: said.map(|said| said.text),
+                        asked: asked.ok().flatten().map(|asked| asked.text),
+                        age: None,
+                    };
+                    this.den.recalled.insert(id, (stamp, recalled, at));
+                    this.den_refresh(false, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
     /// What the truth card of each lion says under its state: what it asks,
-    /// and the summary of its session.
+    /// and where its session left off.
     fn den_notes(&self, cx: &gpui_kit::App) -> HashMap<u64, Vec<Note>> {
         let now = self.now().timestamp_millis();
         let facts = self.den_facts(cx);
@@ -1574,6 +1647,14 @@ impl Shell {
                 model: stored.and_then(|stored| stored.model.clone()),
                 folder: Some(folder),
                 branch,
+                recalled: stored
+                    .and_then(|stored| self.den.recalled.get(&stored.id))
+                    .map(|(_, recalled, at)| den::Recalled {
+                        age: at.map(|at| {
+                            std::time::Duration::from_secs((now / 1000 - at).max(0) as u64)
+                        }),
+                        ..recalled.clone()
+                    }),
             };
             let reading = self.den_reading(id);
             let state = facts
@@ -1602,6 +1683,7 @@ impl Shell {
                 model: away.stored.as_ref().and_then(|stored| stored.model.clone()),
                 folder: Some(folder),
                 branch,
+                recalled: None,
             };
             // What it asks is said as for any lion; no permission prompt is
             // claimed for it, so only its own questions show.
@@ -2177,6 +2259,7 @@ impl Shell {
         // a test has no graphics card to count on, and the pixel art is the
         // same picture every time.
         let three_d = !cfg!(test) && settings::flag(cx, "den_3d");
+        self.den_recall(cx);
         let notes = self.den_notes(cx);
         // Who was sent home: listed under the roster, to be woken there.
         let home = self.den_home();

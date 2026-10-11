@@ -232,10 +232,15 @@ pub enum Event {
         /// Its subject.
         detail: Option<String>,
     },
-    /// A tool ended.
+    /// A tool ended. `tool` and `detail` are those of the call that started
+    /// it, so that the line about its end says what ended.
     ToolFinished {
         /// What kind of tool.
         kind: ToolKind,
+        /// Its name.
+        tool: String,
+        /// Its subject.
+        detail: Option<String>,
         /// Whether it really passed.
         ok: bool,
     },

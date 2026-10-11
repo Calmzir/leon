@@ -17,7 +17,7 @@
 //! | restored and paused (its agent is not resumed yet) | `Asleep` | that it is paused |
 //! | no agent in front (a plain shell, or the agent returned to the shell) | **no lion**: see below | |
 //! | an agent, **no transcript** (a remote session, an agent Leon cannot follow, an id not learned yet): printing | `Mystery` | nothing: only working or quiet is known |
-//! | the same, quiet or the bell rang | `WaitingForUser` | |
+//! | the same, quiet or the bell rang | `WaitingForUser` | nothing more: the card says there is no transcript |
 //! | the same, at the prompt | `Idle` | |
 //! | an agent with a transcript, the shell in front | `Idle` | |
 //! | a tool call without a result that asks the user (`AskUserQuestion`, `ExitPlanMode`) | `WaitingForUser` | what it asks |
@@ -87,9 +87,18 @@
 //! ([`asked`]): the whole command or path of the call a permission prompt is
 //! about, a question with its answers, a plan. It never offers an answer:
 //! the transcript does not say which key answers, nor that the question is
-//! still on screen, so the answer is given in the terminal. Then comes a
-//! summary of the session in two groups ([`notes`]), the conversation and
-//! the session, every line a fact of the window or of the transcript.
+//! still on screen, so the answer is given in the terminal. Then comes
+//! where the session left off ([`notes`]), each group under a rule: what the
+//! agent last said, in its own words and at length, since that is what
+//! somebody who looks at a lion wants to know without opening its terminal;
+//! what the user last asked of it; and the facts of the session in a few
+//! short lines. Every line is a fact of the window, of the transcript or of
+//! the history.
+//!
+//! A session whose transcript is not followed (a `mystery`) still has a
+//! history in Leon's store, imported when its agent goes quiet. Its card
+//! says what the history last holds ([`Recalled`]) and how old that is: it
+//! is the past, and is said to be.
 //!
 //! # What is never made up
 //!
@@ -144,16 +153,14 @@ pub struct Reading {
     pub prompts: u32,
     /// What it last wrote to the user.
     pub last_words: Option<String>,
-    /// What the user first wrote to it, as far as was read.
-    pub first_prompt: Option<String>,
     /// What the user last wrote to it.
     pub last_prompt: Option<String>,
 }
 
 impl Reading {
     /// Keeps what the truth card says of the conversation and no picture
-    /// holds: how many times the user spoke, their first and last words,
-    /// and the agent's last words.
+    /// holds: how many times the user spoke, their last words, and the
+    /// agent's last words.
     pub fn note(&mut self, beats: &[Beat]) {
         for beat in beats {
             match beat {
@@ -162,15 +169,24 @@ impl Reading {
                     self.last_words = Some(text.clone());
                 }
                 Beat::Heard { text, .. } if !text.trim().is_empty() => {
-                    if self.first_prompt.is_none() {
-                        self.first_prompt = Some(text.clone());
-                    }
                     self.last_prompt = Some(text.clone());
                 }
                 _ => {}
             }
         }
     }
+}
+
+/// The end of a session's conversation as Leon's history holds it: what a
+/// card says of a session whose transcript is not followed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Recalled {
+    /// The agent's last message in the history.
+    pub said: Option<String>,
+    /// The user's last message in the history.
+    pub asked: Option<String>,
+    /// How long ago the agent's message was written.
+    pub age: Option<Duration>,
 }
 
 /// What the window knows of a session beside its transcript, for the
@@ -194,6 +210,9 @@ pub struct About {
     /// The branch checked out there, when that folder is a worktree Leon
     /// knows.
     pub branch: Option<String>,
+    /// The end of its conversation in the history, for a session whose
+    /// transcript says nothing of it.
+    pub recalled: Option<Recalled>,
 }
 
 /// How long, in the words of the truth card: `less than a minute`, `38 min`,
@@ -217,19 +236,45 @@ fn tokens(count: u64) -> String {
     }
 }
 
-/// How many characters of the agent's last words, and of the user's
-/// first and last, the truth card shows.
+/// How many characters of the user's last words the truth card shows.
 pub const LAST_WORDS_CHARS: usize = 140;
+/// How many characters of the agent's last words the truth card shows: it
+/// is what the card is read for.
+pub const SAID_CHARS: usize = 240;
 
-/// A text on one line, cut at [`LAST_WORDS_CHARS`] with an ellipsis.
-fn one_line(text: &str) -> String {
+/// A text on one line, cut at `chars` with an ellipsis.
+fn one_line(text: &str, chars: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= LAST_WORDS_CHARS {
+    if flat.chars().count() <= chars {
         return flat;
     }
-    let mut cut: String = flat.chars().take(LAST_WORDS_CHARS).collect();
+    let mut cut: String = flat.chars().take(chars).collect();
     cut.push('\u{2026}');
     cut
+}
+
+/// Whether a session's title in the history says nothing its name does not:
+/// they are the same, or one begins with the other once the name has lost
+/// the short tag an agent puts before it in the terminal's title (`OC | `)
+/// and the ellipsis it was cut with.
+fn same_title(name: &str, title: &str) -> bool {
+    let plain = |text: &str| {
+        text.trim()
+            .trim_end_matches(['\u{2026}', '.'])
+            .trim()
+            .to_lowercase()
+    };
+    let title = plain(title);
+    let name = plain(name);
+    let core = match name.split_once(" | ") {
+        Some((tag, rest)) if tag.chars().count() <= 4 => rest.trim().to_owned(),
+        _ => name.clone(),
+    };
+    [name, core].iter().any(|name| {
+        *name == title
+            || (name.chars().count() >= 8 && title.starts_with(name.as_str()))
+            || (title.chars().count() >= 8 && name.starts_with(title.as_str()))
+    })
 }
 
 /// What a lion asks of the user, in full, for somebody who decides at a
@@ -283,9 +328,10 @@ pub fn asked(state: CubState, pulse: &Pulse) -> Vec<String> {
 }
 
 /// What the truth card of a session says under its state, a line each:
-/// what it asks, when it asks ([`asked`]), then a summary in two groups, the
-/// conversation and the session. Facts of the window and of the transcript,
-/// and nothing that is not known. No model writes it.
+/// what it asks, when it asks ([`asked`]), then where it left off, each
+/// group under a rule: what the agent last said, what the user last asked,
+/// and the facts of the session. Facts of the window, of the transcript and
+/// of the history, and nothing that is not known. No model writes it.
 pub fn notes(
     name: &str,
     about: &About,
@@ -296,68 +342,80 @@ pub fn notes(
     if let (Some(state), Some(reading)) = (state, reading) {
         out.extend(asked(state, &reading.pulse).into_iter().map(Note::urgent));
     }
+    let mut groups: Vec<Vec<Note>> = Vec::new();
 
-    // The conversation: who said what, and how much of it there is.
-    let mut talk = Vec::new();
-    if let Some(reading) = reading {
-        let first = reading.first_prompt.as_deref().map(one_line);
-        let last = reading.last_prompt.as_deref().map(one_line);
-        match (&first, &last) {
-            (Some(first), Some(last)) if first != last => {
-                talk.push(format!("You first said: {first}"));
-                talk.push(format!("You last said: {last}"));
-            }
-            (_, Some(last)) => talk.push(format!("You said: {last}")),
-            _ => {}
-        }
-        if let Some(words) = &reading.last_words {
-            talk.push(format!("Last said: {}", one_line(words)));
-        }
+    // Where it left off: the agent's last words, from the transcript when
+    // it is followed and else from the history, which says how old it is.
+    let recalled = about.recalled.as_ref();
+    let live = reading.and_then(|reading| reading.last_words.as_deref());
+    let old = recalled.and_then(|recalled| recalled.said.as_deref());
+    if let Some(words) = live {
+        groups.push(vec![
+            Note::heading("LAST SAID"),
+            Note::said(one_line(words, SAID_CHARS)),
+        ]);
+    } else if let Some(words) = old {
+        let heading = match recalled.and_then(|recalled| recalled.age) {
+            Some(age) => format!("LAST IN HISTORY \u{b7} {} ago", span(age)),
+            None => "LAST IN HISTORY".to_owned(),
+        };
+        groups.push(vec![
+            Note::heading(heading),
+            Note::said(one_line(words, SAID_CHARS)),
+        ]);
     }
-    let turns = reading.map_or(0, |reading| reading.prompts);
-    talk.extend(match (turns, about.messages) {
-        (0, None | Some(0)) => None,
-        (0, Some(messages)) => Some(format!("{messages} messages")),
-        (turns, None | Some(0)) => Some(format!("{turns} of your messages")),
-        (turns, Some(messages)) => Some(format!("{turns} of your messages, {messages} in all")),
-    });
-    if about.queued > 0 {
-        talk.push(format!(
-            "{} queued for its prompt",
-            super::den_post::count(about.queued)
-        ));
+    let prompt = reading
+        .and_then(|reading| reading.last_prompt.as_deref())
+        .or_else(|| recalled.and_then(|recalled| recalled.asked.as_deref()));
+    if let Some(prompt) = prompt {
+        groups.push(vec![
+            Note::heading("YOU ASKED"),
+            Note::plain(one_line(prompt, LAST_WORDS_CHARS)),
+        ]);
     }
 
-    // The session: what runs, where, since when and what it has used.
+    // The session: what runs, where, how much of it there is and what it
+    // has used. Short lines with no heading: they are looked up, not read.
     let mut session = Vec::new();
     match (about.agent.as_deref(), about.model.as_deref()) {
-        (Some(agent), Some(model)) => session.push(format!("{agent}, {model}")),
+        (Some(agent), Some(model)) => session.push(format!("{agent} \u{b7} {model}")),
         (Some(agent), None) => session.push(agent.to_owned()),
         (None, Some(model)) => session.push(model.to_owned()),
         (None, None) => {}
     }
     match (about.folder.as_deref(), about.branch.as_deref()) {
-        (Some(folder), Some(branch)) => session.push(format!("In {folder}, on {branch}")),
-        (Some(folder), None) => session.push(format!("In {folder}")),
+        (Some(folder), Some(branch)) => session.push(format!("{folder} \u{b7} {branch}")),
+        (Some(folder), None) => session.push(folder.to_owned()),
         _ => {}
     }
     if let Some(title) = about
         .title
         .as_deref()
         .map(str::trim)
-        .filter(|title| !title.is_empty() && !title.eq_ignore_ascii_case(name.trim()))
+        .filter(|title| !title.is_empty() && !same_title(name, title))
     {
         session.push(format!("Title: {title}"));
     }
+    let turns = reading.map_or(0, |reading| reading.prompts);
+    let mut size = Vec::new();
+    size.extend(match (turns, about.messages) {
+        (0, None | Some(0)) => None,
+        (0, Some(messages)) => Some(format!("{messages} messages")),
+        (turns, None | Some(0)) => Some(format!("{turns} of your messages")),
+        (turns, Some(messages)) => Some(format!("{messages} messages, {turns} yours")),
+    });
     if let Some(running) = about.running_for {
-        session.push(format!("Running for {}", span(running)));
+        size.push(format!("up {}", span(running)));
+    }
+    if !size.is_empty() {
+        session.push(size.join(" \u{b7} "));
     }
     if let Some(reading) = reading {
         let pulse = &reading.pulse;
+        // How many tools it used is its level, in the card's first line.
         match (pulse.tool_calls(), pulse.failed_calls()) {
-            (0, _) => {}
-            (calls, 0) => session.push(format!("{calls} tools used")),
-            (calls, failed) => session.push(format!("{calls} tools used, {failed} failed")),
+            (_, 0) => {}
+            (calls, failed) => session.push(format!("{failed} of {calls} tools failed")),
         }
         match (pulse.context_tokens(), pulse.context_window()) {
             (Some(used), Some(window)) if window > 0 => session.push(format!(
@@ -375,11 +433,17 @@ pub fn notes(
             n => session.push(format!("{n} sub-agents out")),
         }
     }
-    for (heading, lines) in [("CONVERSATION", talk), ("SESSION", session)] {
-        if !lines.is_empty() {
-            out.push(Note::heading(heading));
-            out.extend(lines.into_iter().map(Note::plain));
-        }
+    if about.queued > 0 {
+        session.push(format!(
+            "{} queued for its prompt",
+            super::den_post::count(about.queued)
+        ));
+    }
+    groups.push(session.into_iter().map(Note::plain).collect());
+
+    for group in groups.into_iter().filter(|group| !group.is_empty()) {
+        out.push(Note::rule());
+        out.extend(group);
     }
     out
 }
@@ -477,7 +541,8 @@ pub fn state(facts: &Facts, pulse: Option<&Pulse>) -> (CubState, Option<String>)
     let Some(pulse) = pulse else {
         return match facts.activity {
             Activity::Working => (CubState::Mystery, None),
-            Activity::Waiting => (CubState::WaitingForUser, some("Quiet, or the bell rang")),
+            // The card of a mystery says what little is known of it.
+            Activity::Waiting => (CubState::WaitingForUser, None),
             _ => (CubState::Idle, None),
         };
     };
@@ -857,6 +922,10 @@ pub fn tell(id: u64, name: &str, pulse: &mut Pulse, beats: &[Beat]) -> Vec<Happe
                     (Some(ToolKind::Ask), _) | (None, _) => None,
                     (Some(kind), _) => Some(Event::ToolFinished {
                         kind: den_kind(kind),
+                        tool: tool.map(|tool| tool.name.clone()).unwrap_or_default(),
+                        detail: tool
+                            .map(|tool| tool.detail.trim().to_owned())
+                            .filter(|detail| !detail.is_empty()),
                         ok: !failed,
                     }),
                 }
@@ -882,13 +951,15 @@ pub fn tell(id: u64, name: &str, pulse: &mut Pulse, beats: &[Beat]) -> Vec<Happe
 }
 
 /// The past of a session as the feed sums it up ([`leon_den::feed::backfill`]):
-/// every tool it used, every message it wrote to the user with its time, and
+/// every tool it used by its name, every message it wrote to the user with its time, and
 /// where its turns ended. A question to the user is no tool.
 pub fn past(beats: &[Beat]) -> Vec<Past> {
     beats
         .iter()
         .filter_map(|beat| match beat {
-            Beat::ToolStarted { kind, .. } if *kind != ToolKind::Ask => Some(Past::Tool),
+            Beat::ToolStarted { kind, name, .. } if *kind != ToolKind::Ask => {
+                Some(Past::Tool(name.clone()))
+            }
             Beat::Said { text, at } => Some(Past::Speech(text.clone(), *at)),
             Beat::TurnEnded | Beat::Interrupted => Some(Past::TurnEnded),
             _ => None,
@@ -1328,37 +1399,46 @@ mod tests {
             model: Some("claude-opus".to_owned()),
             folder: Some("leon".to_owned()),
             branch: Some("main".to_owned()),
+            recalled: None,
         };
         let said = notes("moss", &about, Some(&reading), Some(CubState::Delegating));
         assert_eq!(
             texts(&said),
             [
-                "CONVERSATION",
-                "You first said: fix the build please",
-                "You last said: now find the tests",
-                "Last said: The build is fixed. Two files changed.",
-                "2 of your messages, 14 in all",
-                "2 messages queued for its prompt",
-                "SESSION",
-                "Claude Code, claude-opus",
-                "In leon, on main",
+                "",
+                "LAST SAID",
+                "The build is fixed. Two files changed.",
+                "",
+                "YOU ASKED",
+                "now find the tests",
+                "",
+                "Claude Code \u{b7} claude-opus",
+                "leon \u{b7} main",
                 "Title: Fix the build",
-                "Running for 38 min",
-                "3 tools used, 1 failed",
+                "14 messages, 2 yours \u{b7} up 38 min",
+                "1 of 3 tools failed",
                 "Context: 84k of 200k tokens (42%)",
                 "1 sub-agent out",
+                "2 messages queued for its prompt",
             ]
         );
-        // The names of the groups are headings, the facts are plain.
-        let headings: Vec<&str> = said
-            .iter()
-            .filter(|note| note.tone == leon_den::NoteTone::Heading)
-            .map(|note| note.text.as_str())
-            .collect();
-        assert_eq!(headings, ["CONVERSATION", "SESSION"]);
-        assert!(said
-            .iter()
-            .all(|note| note.tone != leon_den::NoteTone::Urgent));
+        // A rule is over each group; what the agent said has a tone of its
+        // own, the names of the groups are headings, the facts are plain.
+        use leon_den::NoteTone;
+        let tones: Vec<NoteTone> = said.iter().map(|note| note.tone).collect();
+        assert_eq!(
+            tones[..7],
+            [
+                NoteTone::Rule,
+                NoteTone::Heading,
+                NoteTone::Said,
+                NoteTone::Rule,
+                NoteTone::Heading,
+                NoteTone::Plain,
+                NoteTone::Rule,
+            ]
+        );
+        assert!(tones[7..].iter().all(|tone| *tone == NoteTone::Plain));
         // A title that is the lion's name already is not said twice, and
         // what the history does not know is left out.
         let plain = About {
@@ -1369,7 +1449,30 @@ mod tests {
         };
         assert_eq!(
             texts(&notes("moss", &plain, None, None)),
-            ["SESSION", "In api", "Running for less than a minute"]
+            ["", "api", "up less than a minute"]
+        );
+        // Neither is one the name only puts a tag before, or was cut from.
+        for (name, title) in [
+            (
+                "OC | Estrategia de blog y posicionamiento para ADE (Agentic\u{2026}",
+                "Estrategia de blog y posicionamiento para ADE (Agentic Development)",
+            ),
+            ("Fix the build", "Fix the build and the tests"),
+            ("Fix the build and the tests", "fix the build"),
+        ] {
+            let about = About {
+                title: Some(title.to_owned()),
+                ..About::default()
+            };
+            assert!(notes(name, &about, None, None).is_empty(), "{name}");
+        }
+        let other = About {
+            title: Some("Fix the build".to_owned()),
+            ..About::default()
+        };
+        assert_eq!(
+            texts(&notes("OC | api", &other, None, None)),
+            ["", "Title: Fix the build"]
         );
         // Without a transcript only the window's own facts are said.
         let stored = About {
@@ -1379,29 +1482,71 @@ mod tests {
         };
         assert_eq!(
             texts(&notes("moss", &stored, None, None)),
-            [
-                "CONVERSATION",
-                "6 messages",
-                "1 message queued for its prompt"
-            ]
+            ["", "6 messages", "1 message queued for its prompt"]
         );
-        // One message of the user's is said once; long words are cut.
+        // Long words are cut: the agent's later than the user's.
         let mut long = Reading::default();
         long.note(&[
-            heard("only this"),
+            heard(&"word ".repeat(80)),
             Beat::Said {
                 text: "word ".repeat(80),
                 at: None,
             },
         ]);
         let said = notes("moss", &About::default(), Some(&long), None);
-        assert_eq!(said.len(), 3);
-        assert_eq!(said[1].text, "You said: only this");
-        assert!(said[2].text.ends_with('\u{2026}'));
         assert_eq!(
-            said[2].text.chars().count(),
-            "Last said: ".len() + LAST_WORDS_CHARS + 1
+            texts(&said)[..2],
+            ["", "LAST SAID"],
+            "with no fact of the session, its group is left out"
         );
+        assert_eq!(said.len(), 6);
+        assert!(said[2].text.ends_with('\u{2026}') && said[5].text.ends_with('\u{2026}'));
+        assert_eq!(said[2].text.chars().count(), SAID_CHARS + 1);
+        assert_eq!(said[5].text.chars().count(), LAST_WORDS_CHARS + 1);
+    }
+
+    #[test]
+    fn a_session_with_no_transcript_says_where_its_history_left_off_and_how_old_that_is() {
+        let about = About {
+            messages: Some(162),
+            agent: Some("opencode".to_owned()),
+            recalled: Some(Recalled {
+                said: Some("The outline is ready.\nShall I write the first post?".to_owned()),
+                asked: Some("plan the blog".to_owned()),
+                age: Some(Duration::from_secs(12 * 60)),
+            }),
+            ..About::default()
+        };
+        let said = notes("oc", &about, None, Some(CubState::WaitingForUser));
+        assert_eq!(
+            texts(&said),
+            [
+                "",
+                "LAST IN HISTORY \u{b7} 12 min ago",
+                "The outline is ready. Shall I write the first post?",
+                "",
+                "YOU ASKED",
+                "plan the blog",
+                "",
+                "opencode",
+                "162 messages",
+            ]
+        );
+        assert_eq!(said[2].tone, leon_den::NoteTone::Said);
+        // What the transcript says is newer than what the history holds.
+        let mut reading = Reading::default();
+        reading.note(&[Beat::Said {
+            text: "Written.".to_owned(),
+            at: None,
+        }]);
+        let said = notes("oc", &about, Some(&reading), None);
+        assert_eq!(texts(&said)[..3], ["", "LAST SAID", "Written."]);
+        // A history with no word of the agent's has no such group.
+        let empty = About {
+            recalled: Some(Recalled::default()),
+            ..About::default()
+        };
+        assert!(notes("oc", &empty, None, None).is_empty());
     }
 
     #[test]
@@ -1543,6 +1688,8 @@ mod tests {
                 },
                 Event::ToolFinished {
                     kind: leon_den::ToolKind::Run,
+                    tool: "Bash".to_owned(),
+                    detail: Some("cargo test -p leon-den".to_owned()),
                     ok: true,
                 },
                 Event::ToolStarted {
@@ -1552,6 +1699,8 @@ mod tests {
                 },
                 Event::ToolFinished {
                     kind: leon_den::ToolKind::Edit,
+                    tool: "Edit".to_owned(),
+                    detail: Some("shell.rs".to_owned()),
                     ok: false,
                 },
                 Event::ToolStarted {
@@ -1561,6 +1710,8 @@ mod tests {
                 },
                 Event::ToolFinished {
                     kind: leon_den::ToolKind::Read,
+                    tool: "Read".to_owned(),
+                    detail: None,
                     ok: true,
                 },
                 Event::TurnEnded,
@@ -1774,11 +1925,11 @@ mod past_tests {
         assert_eq!(
             past(&beats),
             vec![
-                Past::Tool,
-                Past::Tool,
+                Past::Tool("Tool".into()),
+                Past::Tool("Tool".into()),
                 Past::Speech("Done.\n\nTwo files.".into(), Some(1_772_359_200)),
                 Past::TurnEnded,
-                Past::Tool,
+                Past::Tool("Tool".into()),
                 Past::TurnEnded,
             ]
         );
@@ -1789,9 +1940,9 @@ mod past_tests {
         assert_eq!(
             texts,
             [
-                "MOSS used 2 tools.",
+                "MOSS used 2 tools: Tool x2.",
                 "Done.\n\nTwo files.",
-                "MOSS used a tool."
+                "MOSS used Tool."
             ]
         );
     }

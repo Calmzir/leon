@@ -11,6 +11,12 @@
 //!   it is wrapped, and a long one is cut to [`CLAMP_ROWS`] rows until it is
 //!   opened.
 //!
+//! The entries of one lion that follow each other stand under one heading,
+//! whichever kind they are: its name in full, as far as the row has room,
+//! and the time. Under it the agent's own words are what is read first; the
+//! narrator's lines are the quiet ones around them, and they do not say the
+//! name again ([`unnamed`]): the heading is their subject.
+//!
 //! Everything here is plain data and pure functions: an entry carries its
 //! time (the host says what time it is, [`Feed`] never reads a clock), the
 //! rows are laid out for a width in characters ([`lay`]), and what is in view
@@ -21,7 +27,7 @@
 //! At most [`TOTAL`] entries, the oldest dropped first. When the Den opens
 //! on sessions that have a past, each is given its last [`PER_SESSION`]
 //! entries ([`backfill`]): its messages as speech, and one line for the
-//! tools of each turn rather than one for each tool.
+//! tools of each turn rather than one for each tool, which names them.
 //!
 //! # Following
 //!
@@ -34,7 +40,7 @@ use std::time::Duration;
 
 use gpui_kit::Hsla;
 
-use crate::narrator::{shout, TICK, TYPED_PER_TICK};
+use crate::narrator::{loud, shout, TICK, TYPED_PER_TICK};
 
 /// How many entries the feed keeps.
 pub const TOTAL: usize = 500;
@@ -351,23 +357,55 @@ impl Feed {
 /// Something of a session's past, as its transcript tells it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Past {
-    /// A tool was used.
-    Tool,
+    /// A tool was used: its name, as the agent calls it.
+    Tool(String),
     /// The agent said this to the user, at that time if it is known.
     Speech(String, Option<i64>),
     /// A turn ended.
     TurnEnded,
 }
 
+/// How many different tools the line that sums up a turn names.
+pub const TOOLS_NAMED: usize = 3;
+
 /// The line that sums up the tools of a turn: the narrator's, and the plain
-/// one.
-pub fn tools_line(name: &str, tools: usize) -> (String, String) {
+/// one. It names them, the first used first and each once with how many
+/// times, up to [`TOOLS_NAMED`]: `MOSS used 5 tools: Read x3, Edit, Bash.`
+pub fn tools_line(name: &str, tools: &[String]) -> (String, String) {
     let name = shout(name);
-    match tools {
-        1 => (format!("{name} used a tool."), "Used 1 tool.".to_owned()),
-        n => (
+    let mut named: Vec<(&str, usize)> = Vec::new();
+    for tool in tools.iter().map(|tool| tool.trim()) {
+        if tool.is_empty() {
+            continue;
+        }
+        match named.iter_mut().find(|(known, _)| *known == tool) {
+            Some((_, times)) => *times += 1,
+            None => named.push((tool, 1)),
+        }
+    }
+    let more = named.len() > TOOLS_NAMED;
+    let mut list = named
+        .iter()
+        .take(TOOLS_NAMED)
+        .map(|(tool, times)| match times {
+            1 => (*tool).to_owned(),
+            times => format!("{tool} x{times}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if more {
+        list.push_str(", \u{2026}");
+    }
+    match (tools.len(), list.is_empty()) {
+        (1, true) => (format!("{name} used a tool."), "Used 1 tool.".to_owned()),
+        (1, false) => (format!("{name} used {list}."), format!("Used {list}.")),
+        (n, true) => (
             format!("{name} used {n} tools."),
             format!("Used {n} tools."),
+        ),
+        (n, false) => (
+            format!("{name} used {n} tools: {list}."),
+            format!("Used {n} tools: {list}."),
         ),
     }
 }
@@ -395,18 +433,18 @@ pub fn backfill(
         plain,
     };
     let mut out: Vec<Item> = Vec::new();
-    let mut tools = 0;
+    let mut tools: Vec<String> = Vec::new();
     let mut last_time: Option<i64> = None;
-    let flush = |out: &mut Vec<Item>, tools: &mut usize, at: Option<i64>| {
-        if *tools > 0 {
-            let (voiced, plain) = tools_line(name, *tools);
+    let flush = |out: &mut Vec<Item>, tools: &mut Vec<String>, at: Option<i64>| {
+        if !tools.is_empty() {
+            let (voiced, plain) = tools_line(name, tools);
             out.push(item(Kind::Narration { urgent: false }, voiced, plain, at));
-            *tools = 0;
+            tools.clear();
         }
     };
     for event in past {
         match event {
-            Past::Tool => tools += 1,
+            Past::Tool(tool) => tools.push(tool.clone()),
             Past::Speech(text, at) => {
                 let at = at.or(last_time);
                 flush(&mut out, &mut tools, at);
@@ -498,12 +536,10 @@ pub enum RowKind {
     Heading {
         /// The colour of the mane.
         tint: Option<Hsla>,
-        /// The name.
+        /// The name, in capitals and whole: the row cuts it to its room.
         name: String,
         /// How long ago, or empty.
         time: String,
-        /// The entries under it are speech: "said".
-        speech: bool,
     },
     /// A row of the narrator's line.
     Narration {
@@ -545,8 +581,23 @@ pub struct Show {
     pub typing: Option<(u64, usize)>,
 }
 
+/// A line of the narrator's as it stands under the heading of the lion it is
+/// about: without the name it begins with, which the heading says in full
+/// (`MOSS used EDIT on a.rs!` is `used EDIT on a.rs!` under `MOSS`). A line
+/// that begins with something else is as it was.
+pub fn unnamed(text: &str, name: &str) -> String {
+    let subject = format!("{} ", shout(name));
+    if !text.starts_with(&subject) {
+        return text.to_owned();
+    }
+    text.split('\n')
+        .map(|row| row.strip_prefix(&subject).unwrap_or(row))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The rows of the feed, the oldest first: every entry `show` lets through,
-/// under a heading where the lion or the kind changes or time has passed.
+/// under a heading where the lion changes or time has passed.
 pub fn lay(feed: &Feed, show: &Show) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
     let mut before: Option<&Entry> = None;
@@ -564,6 +615,11 @@ pub fn lay(feed: &Feed, show: &Show) -> Vec<Row> {
         } else {
             item.text.clone()
         };
+        let text = if speech {
+            text
+        } else {
+            unnamed(&text, &item.name)
+        };
         let text = match show.typing {
             Some((id, typed)) if id == entry.id && !show.plain => {
                 text.chars().take(typed).collect()
@@ -577,7 +633,6 @@ pub fn lay(feed: &Feed, show: &Show) -> Vec<Row> {
         };
         let joined = before.is_some_and(|before| {
             before.item.cub == item.cub
-                && (before.item.kind == Kind::Speech) == speech
                 && match (before.item.at, item.at) {
                     (Some(a), Some(b)) => b.saturating_sub(a).saturating_abs() <= SAME_BREATH,
                     (None, None) => true,
@@ -596,12 +651,11 @@ pub fn lay(feed: &Feed, show: &Show) -> Vec<Row> {
                 entry: entry.id,
                 kind: RowKind::Heading {
                     tint: item.tint,
-                    name: shout(&item.name),
+                    name: loud(&item.name),
                     time: match (item.at, show.now) {
                         (Some(at), Some(now)) => ago(at, now),
                         _ => String::new(),
                     },
-                    speech,
                 },
                 text: String::new(),
             });

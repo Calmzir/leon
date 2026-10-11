@@ -41,7 +41,8 @@ use gpui_kit::{
     div, prelude::*, px, size, App, Bounds, Context, Entity, FocusHandle, KeyDownEvent, Pixels,
     Render, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
-use leon_den::model::Cub;
+use leon_den::model::{Cub, CubState};
+use leon_den::sim::Note;
 use leon_den::{DenEvent, DenStyle, DenView};
 
 fn flag(name: &str) -> bool {
@@ -64,6 +65,62 @@ fn style(dark: bool) -> DenStyle {
             .into(),
         font_size: px(13.),
     }
+}
+
+/// What a host would say of each lion on its truth card: where it left
+/// off, what was asked of it, and the facts of its session.
+fn notes(cast: &[Cub]) -> std::collections::HashMap<u64, Vec<Note>> {
+    const SAID: [&str; 3] = [
+        "The office is 20 by 15 tiles now, with twelve seats. The two racks moved to the north \
+         wall so the entrance line has room. Tests pass; the README still shows the old room: \
+         shall I retake the pictures?",
+        "I found two call sites that still use the old signature. I'll update both and run the \
+         tests again before touching anything else.",
+        "The build is green.",
+    ];
+    const ASKED: [&str; 3] = [
+        "the default office needs to be bigger",
+        "rename the command and keep the old chord working",
+        "why is the nightly red?",
+    ];
+    cast.iter()
+        .filter(|cub| cub.parent.is_none())
+        .map(|cub| {
+            let pick = cub.id as usize % SAID.len();
+            let mut notes = Vec::new();
+            if cub.state == CubState::WaitingForUser && cub.id % 2 == 0 {
+                notes.push(Note::urgent("Wants to run: cargo build --release --locked"));
+                notes.push(Note::urgent(
+                    "Open it to allow or refuse it in its terminal.",
+                ));
+            }
+            notes.push(Note::rule());
+            notes.push(Note::heading(if cub.mystery {
+                "LAST IN HISTORY \u{b7} 12 min ago"
+            } else {
+                "LAST SAID"
+            }));
+            notes.push(Note::said(SAID[pick]));
+            notes.push(Note::rule());
+            notes.push(Note::heading("YOU ASKED"));
+            notes.push(Note::plain(ASKED[pick]));
+            notes.push(Note::rule());
+            if cub.mystery {
+                notes.push(Note::plain("opencode \u{b7} deepseek-v4.1-flash"));
+                notes.push(Note::plain("leon-web \u{b7} feat/blog"));
+                notes.push(Note::plain("162 messages \u{b7} up 3 d 20 h"));
+            } else {
+                notes.push(Note::plain("Claude Code \u{b7} claude-opus-5-5"));
+                notes.push(Note::plain("leon \u{b7} fixex/the-den"));
+                notes.push(Note::plain("212 messages, 7 yours \u{b7} up 2 h 05 min"));
+                if pick == 0 {
+                    notes.push(Note::plain("3 of 164 tools failed"));
+                }
+                notes.push(Note::plain("Context: 84k of 200k tokens (42%)"));
+            }
+            (cub.id, notes)
+        })
+        .collect()
 }
 
 struct Demo {
@@ -97,6 +154,7 @@ impl Demo {
         self.den.update(cx, |den, cx| {
             den.set_wall_time(wall, cx);
             den.set_cubs(&cast, cx);
+            den.set_notes(notes(&cast), cx);
             if first {
                 // What the sessions did before the Den was opened.
                 for (index, cub) in cast.iter().filter(|cub| cub.parent.is_none()).enumerate() {

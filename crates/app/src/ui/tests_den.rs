@@ -431,7 +431,7 @@ fn a_session_whose_transcript_is_here_shows_what_the_transcript_says(cx: &mut Te
     assert!(past.iter().all(|row| !row.contains("EDIT")), "{past:?}");
     assert_eq!(
         past.iter()
-            .filter(|row| row.ends_with("used 2 tools."))
+            .filter(|row| row.ends_with("used 2 tools: Read, Edit."))
             .count(),
         1,
         "{past:?}"
@@ -516,7 +516,10 @@ fn a_session_whose_transcript_is_here_shows_what_the_transcript_says(cx: &mut Te
         before + 2,
         "one line for the tools, one message: {after:?}"
     );
-    assert!(after[before].ends_with("used 5 tools."), "{after:?}");
+    assert!(
+        after[before].ends_with("used 5 tools: Read x5."),
+        "{after:?}"
+    );
 
     // The session ends: its follower is dropped.
     h.press("escape", cx);
@@ -629,7 +632,7 @@ fn a_session_that_runs_elsewhere_is_a_lion_told_by_its_transcript(cx: &mut TestA
     // Its past is in the feed: what it said, and its tool as one line.
     let past = told(&h, cx);
     assert!(past.contains(&"said: On it.".to_owned()), "{past:?}");
-    assert!(past.contains(&"ALPHA used a tool.".to_owned()), "{past:?}");
+    assert!(past.contains(&"ALPHA used Edit.".to_owned()), "{past:?}");
     // What it does next is told as it happens.
     line(
         &mut file,
@@ -1062,17 +1065,14 @@ fn a_message_is_typed_at_the_prompt_waits_while_the_agent_works_and_never_answer
     // The summary of the session is on its card.
     let card = notes(&h, cx);
     assert!(
-        card.iter().any(|row| row.starts_with("Running for ")),
+        card.iter().any(|row| row.contains("up less than a minute")),
         "{card:?}"
     );
-    assert!(card.contains(&"Last said: Done.".to_owned()), "{card:?}");
+    // Where it left off is said first, under its own heading.
+    assert_eq!(card[..3], ["", "LAST SAID", "Done."], "{card:?}");
     // What the user wrote is there too, and the agent that runs.
-    assert!(
-        card.contains(&"You said: fix the build".to_owned()),
-        "{card:?}"
-    );
-    assert!(card.contains(&"CONVERSATION".to_owned()), "{card:?}");
-    assert!(card.contains(&"SESSION".to_owned()), "{card:?}");
+    assert_eq!(card[4..6], ["YOU ASKED", "fix the build"], "{card:?}");
+    assert!(card.contains(&"Claude Code".to_owned()), "{card:?}");
 
     // At its prompt: the message is pasted, and Enter follows.
     h.press("i", cx);
@@ -1306,9 +1306,11 @@ fn the_lion_that_needs_the_user_is_one_key_away_and_its_card_says_what_it_asks(
         "{card:?}"
     );
     assert_eq!(card[1].0, "Open it to allow or refuse it in its terminal.");
-    assert!(card
+    let asked = card
         .iter()
-        .any(|(text, _)| text == "You said: fix the build"));
+        .position(|(text, _)| text == "YOU ASKED")
+        .expect("what the user asked");
+    assert_eq!(card[asked + 1].0, "fix the build");
     assert_eq!(
         menu_of_lion(&h, cx),
         [
@@ -1743,4 +1745,79 @@ fn a_message_that_was_never_seen_to_start_a_turn_holds_the_ones_behind_it(cx: &m
         typed(&script).contains("second")
     });
     assert!(!typed(&script).contains("third"));
+}
+
+#[gpui_kit::test]
+fn the_card_of_a_session_with_no_transcript_says_where_its_history_left_off(
+    cx: &mut TestAppContext,
+) {
+    use chrono::TimeZone;
+    let h = open_live(cx);
+    let agent = leon_core::AgentId::OPENCODE;
+    let (_dir, path, id) = super::live::local_session(&h, cx, agent, "gamma");
+    // The history holds the agent's answer too.
+    let at = chrono::Utc
+        .with_ymd_and_hms(2026, 10, 4, 11, 57, 0)
+        .unwrap();
+    let message = |role: leon_core::Role, text: &str| leon_core::NewMessage {
+        role,
+        text: text.to_owned(),
+        at,
+    };
+    h.store
+        .upsert_session(
+            &leon_core::NewSession {
+                agent,
+                external_id: "gamma-3".to_owned(),
+                machine_id: leon_core::MachineId::local(),
+                cwd: path,
+                title: "gamma".to_owned(),
+                model: None,
+                started_at: at,
+                updated_at: at,
+            },
+            &[
+                message(leon_core::Role::User, "hello from gamma"),
+                message(
+                    leon_core::Role::Assistant,
+                    "The outline is ready.\nShall I write it?",
+                ),
+            ],
+        )
+        .unwrap();
+    h.settle(cx);
+    super::live::put_cursor_on(&h, cx, NodeId::Session(id));
+    h.press("enter", cx);
+    h.press("enter", cx); // Resume
+    wait_until(&h, cx, "the agent", |h, cx| {
+        screen(h, cx, 1).contains("OPENCODE-RAN")
+    });
+
+    toggle(&h, cx);
+    // Leon follows no transcript of this agent: its lion is a mystery, and
+    // its card says what the history holds, as the past.
+    tick_until(&h, cx, "the history to be read", |h, cx| {
+        card_of(h, cx, 1)
+            .iter()
+            .any(|(text, _)| text.starts_with("LAST IN HISTORY"))
+    });
+    assert!(h.shell(cx, |shell| shell.den.cubs[0].mystery));
+    let card = card_of(&h, cx, 1);
+    let heading = card
+        .iter()
+        .position(|(text, _)| text.starts_with("LAST IN HISTORY"))
+        .unwrap();
+    assert!(card[heading].0.ends_with(" ago"), "{card:?}");
+    assert_eq!(
+        card[heading + 1],
+        (
+            "The outline is ready. Shall I write it?".to_owned(),
+            leon_den::NoteTone::Said
+        )
+    );
+    let asked: Vec<&str> = card[heading + 2..heading + 5]
+        .iter()
+        .map(|(text, _)| text.as_str())
+        .collect();
+    assert_eq!(asked, ["", "YOU ASKED", "hello from gamma"]);
 }

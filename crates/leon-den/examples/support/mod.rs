@@ -188,6 +188,8 @@ pub fn happenings(before: &[Cub], after: &[Cub], round: usize) -> Vec<Happening>
         if old.state == CubState::Running {
             out.push(tell(Event::ToolFinished {
                 kind: ToolKind::Run,
+                tool: String::new(),
+                detail: None,
                 ok: (round + cub.id as usize) % 3 != 0,
             }));
         }
@@ -271,8 +273,10 @@ pub fn past(index: usize, now: i64) -> Vec<leon_den::feed::Past> {
     use leon_den::feed::Past;
     let mut out = Vec::new();
     for turn in 0..3 {
-        for _ in 0..(3 + index * 2 + turn * 4) {
-            out.push(Past::Tool);
+        for tool in 0..(3 + index * 2 + turn * 4) {
+            out.push(Past::Tool(
+                ["Read", "Edit", "Bash", "Grep"][tool % 4].to_owned(),
+            ));
         }
         out.push(Past::Speech(
             SPEECH[(index + turn) % SPEECH.len()].to_owned(),

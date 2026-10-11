@@ -63,8 +63,9 @@ rotan para no repetir y nunca superan dos líneas de 34 caracteres.
 | empieza a leer | `MOSS is sniffing around keys.rs.` |
 | busca | `MOSS empties the shelf looking for "Overlay"...` |
 | ejecuta un comando | `MOSS used CARGO TEST! Waiting for it to land...` |
-| el comando falla | `It's not very effective...` |
-| el comando pasa | `It's super effective!` (solo si de verdad pasó) |
+| el comando falla | `CARGO TEST missed. It's not very effective...` |
+| el comando pasa | `CARGO TEST landed. It's super effective!` (solo si de verdad pasó) |
+| otra herramienta falla | `EDIT missed. It's not very effective...` |
 | lanza un sub-agente | `MOSS sent out EXPLORE!` · `An egg is hatching...` |
 | vuelve un sub-agente | `EXPLORE came back with a report.` |
 | pide permiso | `A wild PERMISSION PROMPT appeared.` · `MOSS is staring at you.` |
@@ -74,15 +75,22 @@ rotan para no repetir y nunca superan dos líneas de 34 caracteres.
 | salió con error | `MOSS fainted! (exit 101)` |
 | nadie en la guarida | `The den is quiet. Too quiet.` |
 | muchos trabajando | `The pride is busy. You may go get coffee.` |
-| resumen de un turno pasado (historial del feed) | `MOSS used 14 tools.` · `MOSS used a tool.` |
+| resumen de un turno pasado (historial del feed) | `MOSS used 5 tools: Read x3, Edit, Bash.` · `MOSS used Bash.` |
 | el feed, sin nada que contar | `Nothing to tell yet.` |
 | el feed de un león que aún no dijo nada | `MOSS has not said a word yet.` |
 | el feed de una sesión sin transcript | `MOSS keeps its thoughts to itself.` (seguido del hecho llano) |
 
+Una línea que cuenta cómo terminó algo nombra ese algo: en el feed se lee
+sola, lejos de la línea que contó el comienzo. En el feed el sujeto es el
+encabezado (el nombre entero del león, en mayúsculas), así que la línea
+debajo no lo repite: `used CARGO TEST!` bajo `MOSS`.
+
 Lo que el agente le escribió al usuario **no** pasa por estas plantillas: el
-feed lo muestra tal cual, como habla (`MOSS said`), sin reescribirlo. Con el
-narrador apagado cada plantilla tiene su gemela llana (`Running \`cargo test\``,
-`Used 14 tools.`), sin nombre y sin broma.
+feed lo muestra tal cual, sin reescribirlo, sobre un fondo propio y con una
+barra a la izquierda. Es lo que se lee primero: las líneas del narrador van
+en el color apagado. Con el narrador apagado cada plantilla tiene su gemela
+llana (`Running \`cargo test\``, `Passed: \`cargo test\``,
+`Used 5 tools: Read x3, Edit, Bash.`), sin nombre y sin broma.
 
 ## 5. Reglas
 
