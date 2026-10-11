@@ -418,6 +418,16 @@ fn checked_title(title: &str) -> Result<String, TaskError> {
     Ok(title)
 }
 
+/// A line of text as the store keeps it, never refused.
+fn clean_text_line(text: &str) -> String {
+    one_line(text)
+}
+
+/// A body as the store keeps it, never refused for its length.
+fn checked_body_text(text: &str) -> String {
+    clean_text(text)
+}
+
 fn checked_body(body: &str) -> Result<String, TaskError> {
     let body = clean_text(body);
     let found = body.chars().count();
@@ -586,6 +596,50 @@ impl Store {
     /// bottom of its column. An open task of the scope with the same title
     /// is not duplicated: it is answered ([`SavedTask::Known`]).
     pub fn add_task(&self, new: &NewTask, at: i64) -> Result<SavedTask> {
+        self.add_task_with(new, at, true)
+    }
+
+    /// Makes a task from an issue of a tracker: what [`Store::add_task`]
+    /// makes, but never answers another task for it (two issues of one title
+    /// are two tasks), and cuts what is too long for a task instead of
+    /// refusing it. `Ok` carries whether the body was cut: a cut body must
+    /// never be written back to the issue.
+    pub fn import_task(&self, new: &NewTask, at: i64) -> Result<(Task, bool)> {
+        let mut clamped = new.clone();
+        let title: String = clean_text_line(&new.title)
+            .chars()
+            .take(MAX_TITLE_CHARS)
+            .collect();
+        clamped.title = if title.trim().is_empty() {
+            "(untitled)".to_owned()
+        } else {
+            title
+        };
+        let body = checked_body_text(&new.body);
+        let cut = body.chars().count() > MAX_BODY_CHARS;
+        clamped.body = body.chars().take(MAX_BODY_CHARS).collect();
+        let mut labels: Vec<String> = Vec::new();
+        for label in &new.labels {
+            let label: String = clean_text_line(label)
+                .to_lowercase()
+                .chars()
+                .take(MAX_LABEL_CHARS)
+                .collect();
+            if !label.is_empty() && !labels.contains(&label) && labels.len() < MAX_LABELS {
+                labels.push(label);
+            }
+        }
+        clamped.labels = labels;
+        clamped.assignee = new
+            .assignee
+            .as_deref()
+            .map(|name| name.chars().take(MAX_ASSIGNEE_CHARS).collect::<String>());
+        match self.add_task_with(&clamped, at, false)? {
+            SavedTask::New(task) | SavedTask::Known(task) => Ok((task, cut)),
+        }
+    }
+
+    fn add_task_with(&self, new: &NewTask, at: i64, dedup: bool) -> Result<SavedTask> {
         new.scope.check()?;
         let title = checked_title(&new.title)?;
         let body = checked_body(&new.body)?;
@@ -597,8 +651,8 @@ impl Store {
         let key = new.scope.key();
         let hash = text_hash(&title);
         self.write(StoreChange::Tasks, |tx| {
-            let known = tx
-                .query_row(
+            let known = if dedup {
+                tx.query_row(
                     &format!(
                         "SELECT {COLUMNS} FROM task t
                          WHERE t.scope = ?1 AND t.title_hash = ?2 AND t.closed_at IS NULL
@@ -607,7 +661,10 @@ impl Store {
                     params![key, hash],
                     task_from_row,
                 )
-                .optional()?;
+                .optional()?
+            } else {
+                None
+            };
             if let Some(known) = known {
                 return Ok(SavedTask::Known(known));
             }
@@ -665,6 +722,23 @@ impl Store {
     /// Changes a task at `at` and returns it as it now is. A new status puts
     /// it at the bottom of that column and sets or clears its closing time.
     pub fn update_task(&self, id: &str, patch: &TaskPatch, at: i64) -> Result<Task> {
+        match self.update_task_if(id, None, patch, at)? {
+            Some(task) => Ok(task),
+            None => Err(StoreError::NotFound("task")),
+        }
+    }
+
+    /// [`Store::update_task`] that writes only when the task was last changed
+    /// at `expected` (when that is given): `Ok(None)` when somebody changed it
+    /// since, so a sync that read the task a moment ago does not overwrite an
+    /// edit made in between.
+    pub fn update_task_if(
+        &self,
+        id: &str,
+        expected: Option<i64>,
+        patch: &TaskPatch,
+        at: i64,
+    ) -> Result<Option<Task>> {
         if patch.is_empty() {
             return Err(TaskError::NothingToChange.into());
         }
@@ -682,6 +756,9 @@ impl Store {
         let id = self.task_id(id)?;
         self.write(StoreChange::Tasks, |tx| {
             let mut task = row_of(tx, &id)?;
+            if expected.is_some_and(|expected| task.updated_at != expected) {
+                return Ok(None);
+            }
             let key = task.scope.key();
             if let Some(branch) = branch {
                 task.branch = branch;
@@ -708,7 +785,7 @@ impl Store {
             }
             task.updated_at = at;
             write_task(tx, &task)?;
-            Ok(task)
+            Ok(Some(task))
         })
     }
 
@@ -747,6 +824,12 @@ impl Store {
         self.write(StoreChange::Tasks, |tx| {
             let task = row_of(tx, &id)?;
             tx.execute("DELETE FROM task WHERE id = ?1", [&id])?;
+            // The issue it was linked to stays linked to nothing: a sync
+            // must not bring it back as a new task.
+            tx.execute(
+                "UPDATE task_link SET task_id = NULL WHERE task_id = ?1",
+                [&id],
+            )?;
             Ok(task)
         })
     }

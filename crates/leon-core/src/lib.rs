@@ -43,6 +43,7 @@ pub use store::search::{
     fts_query, snippet_segments, SearchHit, SearchQuery, SNIPPET_ELLIPSIS, SNIPPET_END,
     SNIPPET_START,
 };
+pub use store::task_sync::{SyncBase, SyncConfig, TaskLink, GITHUB};
 pub use store::tasks::{
     NewTask, SavedTask, Task, TaskError, TaskFilter, TaskHit, TaskPatch, TaskPriority, TaskStatus,
 };
