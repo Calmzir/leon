@@ -47,6 +47,10 @@ For Leon hosts it adds a third, opt-out-free but read-only primitive:
   empty result. The client imports it as that machine's own state, so this
   machine's section of the client's sidebar mirrors the host's one: the same
   projects, the same history, resumable there.
+  The answer also carries the sessions pinned on that computer, in the order
+  of its Pinned section, as a field added at the end of the message: a peer
+  that does not know it stops reading before it, and an answer that ends
+  before it reads as no pins, so an older Leon on either side keeps working.
 
 Everything above those (git, probing, agents) is unchanged: a relay machine is
 just another machine.

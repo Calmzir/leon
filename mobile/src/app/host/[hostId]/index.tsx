@@ -7,7 +7,14 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, View } from 'react-native';
 
-import { allRows, buildChatTree, searchWords, type FoundRow, type ProjectNode } from '@/chat/list';
+import {
+  allRows,
+  buildChatTree,
+  pinnedRows,
+  searchWords,
+  type FoundRow,
+  type ProjectNode,
+} from '@/chat/list';
 import { useApp } from '@/store/app';
 import { recheckLogos } from '@/store/logos';
 import { ensureLink, forgetHost, refreshShared, useRuntime, watchHost } from '@/store/runtime';
@@ -61,6 +68,12 @@ export default function HostChats() {
   const setOrder = useApp((s) => s.setSessionOrder);
   const flat = words.length > 0 || order === 'recent';
   const total = tree.projects.reduce((sum, project) => sum + project.count, 0) + tree.unsortedCount;
+
+  // What that computer has pinned, above its projects as in its sidebar.
+  const pinned = useMemo(
+    () => pinnedRows(hostId, Object.values(chats), shared?.pinned ?? [], tree),
+    [hostId, chats, shared, tree],
+  );
 
   const items = useMemo<Item[]>(() => {
     if (flat) return allRows(tree, words).map((found): Item => ({ type: 'session', ...found }));
@@ -136,13 +149,31 @@ export default function HostChats() {
         }
         getItemType={(item) => item.type}
         ListHeaderComponent={
-          flat ? (
+          words.length > 0 ? (
             <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
-              <Label tone="faint">{words.length > 0 ? `[ ${items.length} found ]` : '[ Recent ]'}</Label>
+              <Label tone="faint">[ {items.length} found ]</Label>
             </View>
-          ) : tree.projects.length > 0 ? (
-            <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
-              <Label tone="faint">[ Projects ]</Label>
+          ) : flat || tree.projects.length > 0 || pinned.length > 0 ? (
+            <View>
+              {pinned.length > 0 ? (
+                <View style={{ paddingTop: 16, paddingBottom: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 8 }}>
+                    <Feather name="bookmark" size={12} color={t.signal} />
+                    <Label tone="faint">[ Pinned ]</Label>
+                    <Label tone="faint" style={{ marginLeft: 'auto' }}>
+                      {pinned.length}
+                    </Label>
+                  </View>
+                  {pinned.map(({ row, where }) => (
+                    <SessionCell key={row.key} hostId={hostId} row={row} where={where} />
+                  ))}
+                </View>
+              ) : null}
+              {flat || tree.projects.length > 0 ? (
+                <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
+                  <Label tone="faint">{flat ? '[ Recent ]' : '[ Projects ]'}</Label>
+                </View>
+              ) : null}
             </View>
           ) : noProjects ? (
             // The whole of what a computer without projects has to say.

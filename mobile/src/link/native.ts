@@ -17,6 +17,7 @@ import {
   TurnEvent_Tags,
   type CodeCheck as NativeCodeCheck,
   type ConnectionState as NativeConnectionState,
+  type HistorySession as NativeHistorySession,
   type HostSessionLike,
   type QuestionKind as NativeQuestionKind,
   type TurnEvent as NativeTurnEvent,
@@ -27,6 +28,7 @@ import {
   LinkError,
   type CodeCheck,
   type ConnState,
+  type HistorySession,
   type HostLink,
   type LinkErrorCode,
   type LinkService,
@@ -245,6 +247,20 @@ function handleOf(turn: TurnLike): TurnHandle {
   };
 }
 
+function historySession(s: NativeHistorySession): HistorySession {
+  return {
+    agent: s.agent,
+    externalId: s.externalId,
+    cwd: s.cwd,
+    title: s.title,
+    model: s.model,
+    startedMs: Number(s.startedMs),
+    updatedMs: Number(s.updatedMs),
+    messages: s.messages,
+    canResume: s.canResume,
+  };
+}
+
 function wrapSession(session: HostSessionLike): HostLink {
   return {
     state: () => fromState(session.state()),
@@ -256,18 +272,10 @@ function wrapSession(session: HostSessionLike): HostLink {
         const shared = await session.shareState();
         return {
           projects: shared.projects.map((p) => ({ name: p.name, root: p.root })),
-          sessions: shared.sessions.map((s) => ({
-            agent: s.agent,
-            externalId: s.externalId,
-            cwd: s.cwd,
-            title: s.title,
-            model: s.model,
-            startedMs: Number(s.startedMs),
-            updatedMs: Number(s.updatedMs),
-            messages: s.messages,
-            canResume: s.canResume,
-          })),
+          sessions: shared.sessions.map(historySession),
           truncated: shared.truncated,
+          // An installed build older than the pins has no such field.
+          pinned: (shared.pinned ?? []).map(historySession),
         };
       }),
     transcript: (agent, externalId) =>

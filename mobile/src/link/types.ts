@@ -75,6 +75,12 @@ export type SharedState = {
   projects: Project[];
   sessions: HistorySession[];
   truncated: boolean;
+  /**
+   * The sessions that computer has pinned, in the order of its Pinned
+   * section; they may be older than everything in `sessions`. Empty from a
+   * Leon that does not say.
+   */
+  pinned: HistorySession[];
 };
 
 /**

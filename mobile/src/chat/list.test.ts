@@ -5,6 +5,7 @@ import type { HistorySession } from '@/link/types';
 import {
   allRows,
   buildChatTree,
+  pinnedRows,
   projectRows,
   searchWords,
   sessionChatId,
@@ -241,6 +242,32 @@ describe('the newest first, and search', () => {
     ]);
     expect(allRows(tree, searchWords('claude api')).map(({ row }) => row.title)).toEqual(['Rate limits']);
     expect(allRows(tree, searchWords('nothing'))).toEqual([]);
+  });
+
+  test('the pinned sessions keep the order of the computer, and say what this device knows of them', () => {
+    const chats = [
+      chat({
+        id: 'mine',
+        sessionIds: ['c'],
+        title: 'Continued here',
+        updatedAt: 60,
+        activeTurn: { turnId: 't', waiting: true },
+      }),
+    ];
+    const sessions = [
+      session({ externalId: 'a', updatedMs: 5, cwd: '/srv/api', title: 'Rate limits' }),
+      session({ externalId: 'c', updatedMs: 50, title: 'Fix the build' }),
+    ];
+    const old = session({ externalId: 'z', updatedMs: 1, cwd: '/home/me/notes/', title: 'An old one' });
+    const withMine = buildChatTree('H', chats, sessions, PROJECTS, TREES);
+    const rows = pinnedRows('H', chats, [old, sessions[1]!, sessions[0]!], withMine);
+    expect(rows.map(({ row, where }) => [row.title, where, row.waiting])).toEqual([
+      ['An old one', 'notes', false],
+      ['Continued here', 'Leon', true],
+      ['Rate limits', 'api', false],
+    ]);
+    expect(rows[0]!.row.key).toBe(sessionChatId('H', 'claude', 'z'));
+    expect(pinnedRows('H', chats, [], withMine)).toEqual([]);
   });
 
   test('the sessions of a project across its worktrees, newest first', () => {

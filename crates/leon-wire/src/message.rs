@@ -40,6 +40,9 @@ pub const REPLAY_BUFFER_BYTES: usize = 2 * 1024 * 1024;
 /// [`Message::ShareStateData`]: the newest ones, older ones left out with
 /// `truncated` set.
 pub const SHARE_SESSIONS_LIMIT: usize = 500;
+/// How many pinned sessions a host offers at most in one
+/// [`Message::ShareStateData`]: the first ones of its Pinned section.
+pub const SHARE_PINNED_LIMIT: usize = 100;
 
 const MAX_STRING: usize = 64 * 1024;
 /// The longest name of a program a [`Message::PtyProbed`] carries.
@@ -364,6 +367,16 @@ pub enum Message {
         sessions: Vec<SharedSession>,
         /// Whether `sessions` was cut at [`SHARE_SESSIONS_LIMIT`].
         truncated: bool,
+        /// The sessions the host has pinned, in the order of its Pinned
+        /// section; they may be older than everything in `sessions`.
+        ///
+        /// The one field added to a message after the fact, at its end: a
+        /// peer that does not know it stops reading before it (a payload is
+        /// read from its start and what follows is ignored), and a payload
+        /// that ends before it reads as no pins. So an older Leon on either
+        /// side keeps working, and the protocol version stays what it was.
+        #[serde(default, deserialize_with = "tail")]
+        pinned: Vec<SharedSession>,
     },
     /// Asks for one history session's transcript.
     ShareTranscript {
@@ -486,8 +499,15 @@ impl Message {
                 Err(FrameError::OverLimit("terminal list"))
             }
             Message::ShareStateData {
-                projects, sessions, ..
+                projects,
+                sessions,
+                pinned,
+                ..
             } => {
+                if pinned.len() > SHARE_PINNED_LIMIT {
+                    return Err(FrameError::OverLimit("pinned sessions"));
+                }
+                shared_sessions(pinned)?;
                 for (label, count) in [("projects", projects.len()), ("sessions", sessions.len())] {
                     if count > MAX_ITEMS {
                         return Err(FrameError::OverLimit(label));
@@ -544,6 +564,17 @@ fn bounded(text: &str) -> Result<(), FrameError> {
 }
 
 /// The bounds every shared session's fields must keep.
+/// Reads the last field of a message, added after the message existed: what
+/// is not there (the payload of a peer that does not send it ends first) is
+/// the field's default.
+fn tail<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(T::deserialize(deserializer).unwrap_or_default())
+}
+
 fn shared_sessions(sessions: &[SharedSession]) -> Result<(), FrameError> {
     for session in sessions {
         for text in [
@@ -714,6 +745,7 @@ mod tests {
                 }],
                 sessions: vec![shared_session()],
                 truncated: false,
+                pinned: vec![],
             },
             Message::ShareTranscript {
                 id: 8,
@@ -936,6 +968,65 @@ mod tests {
     }
 
     #[test]
+    fn pinned_sessions_ride_at_the_end_and_an_older_peer_on_either_side_still_reads() {
+        let with_pins = Message::ShareStateData {
+            id: 3,
+            projects: vec![],
+            sessions: vec![shared_session()],
+            truncated: false,
+            pinned: vec![shared_session()],
+        };
+        let bytes = encode_frame(&with_pins).unwrap();
+        assert_eq!(decode_frame(&bytes).unwrap().0, with_pins);
+
+        // What an older host sends: the same message, ending before the pins.
+        #[derive(Serialize, Deserialize)]
+        enum Older {
+            ShareStateData {
+                id: u64,
+                projects: Vec<SharedProject>,
+                sessions: Vec<SharedSession>,
+                truncated: bool,
+            },
+        }
+        let mut old = postcard::to_allocvec(&Older::ShareStateData {
+            id: 3,
+            projects: vec![],
+            sessions: vec![shared_session()],
+            truncated: false,
+        })
+        .unwrap();
+        let payload = postcard::to_allocvec(&with_pins).unwrap();
+        // Same message, same place among the variants.
+        old[0] = payload[0];
+        let read: Message = postcard::from_bytes(&old).unwrap();
+        assert_eq!(
+            read,
+            Message::ShareStateData {
+                id: 3,
+                projects: vec![],
+                sessions: vec![shared_session()],
+                truncated: false,
+                pinned: vec![],
+            }
+        );
+        // What an older client reads of a newer host: everything it knows.
+        let mut as_old = payload.clone();
+        as_old[0] = 0;
+        let Older::ShareStateData { id, sessions, .. } = postcard::from_bytes(&as_old).unwrap();
+        assert_eq!((id, sessions.len()), (3, 1));
+
+        let many = Message::ShareStateData {
+            id: 3,
+            projects: vec![],
+            sessions: vec![],
+            truncated: false,
+            pinned: vec![shared_session(); SHARE_PINNED_LIMIT + 1],
+        };
+        assert!(encode_frame(&many).is_err());
+    }
+
+    #[test]
     fn a_shared_state_over_the_limits_is_refused() {
         let one_project = SharedProject {
             name: "p".into(),
@@ -946,6 +1037,7 @@ mod tests {
             projects: vec![one_project; MAX_ITEMS + 1],
             sessions: vec![],
             truncated: false,
+            pinned: vec![],
         };
         assert!(encode_frame(&huge).is_err());
         let mut session = shared_session();
@@ -956,6 +1048,7 @@ mod tests {
             projects: vec![],
             sessions: vec![session],
             truncated: false,
+            pinned: vec![],
         };
         assert!(encode_frame(&wide).is_err());
     }

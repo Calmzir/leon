@@ -181,6 +181,20 @@ pub struct Attach {
     pub exit: Option<Exit>,
 }
 
+/// What a host shares of its own Leon ([`Client::share_state`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Shared {
+    /// Its projects, in the order it shows them.
+    pub projects: Vec<SharedProject>,
+    /// Its history sessions, newest first.
+    pub sessions: Vec<SharedSession>,
+    /// Whether `sessions` was cut at the host's limit.
+    pub truncated: bool,
+    /// The sessions it has pinned, in the order of its Pinned section; none
+    /// from a host that does not say.
+    pub pinned: Vec<SharedSession>,
+}
+
 /// How the connection is protected.
 pub enum Security {
     /// A Noise session with the host's pinned key: for a host reached
@@ -629,16 +643,20 @@ impl Client {
     /// Asks the host for what its own Leon shares: the projects it holds and
     /// the sessions of its unified history, newest first. A host that shares
     /// nothing answers with empty lists.
-    pub async fn share_state(
-        &self,
-    ) -> Result<(Vec<SharedProject>, Vec<SharedSession>, bool), ClientError> {
+    pub async fn share_state(&self) -> Result<Shared, ClientError> {
         match self.request(|id| Message::ShareState { id }, None).await? {
             Message::ShareStateData {
                 projects,
                 sessions,
                 truncated,
+                pinned,
                 ..
-            } => Ok((projects, sessions, truncated)),
+            } => Ok(Shared {
+                projects,
+                sessions,
+                truncated,
+                pinned,
+            }),
             _ => Err(ClientError::Protocol),
         }
     }
@@ -1169,6 +1187,7 @@ fn on_message(
             projects,
             sessions,
             truncated,
+            pinned,
         } => {
             if let Some((reply, _)) = pending.remove(&id) {
                 let _ = reply.send(Ok(Message::ShareStateData {
@@ -1176,6 +1195,7 @@ fn on_message(
                     projects,
                     sessions,
                     truncated,
+                    pinned,
                 }));
             }
         }

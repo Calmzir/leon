@@ -69,16 +69,16 @@ impl ShareSource for StoreShare {
             .recent_sessions(&filter, OWN_SESSIONS_OFFERED)
             .unwrap_or_default()
             .into_iter()
-            .map(|session| SharedSession {
-                agent: session.agent.as_str().to_owned(),
-                external_id: session.external_id,
-                cwd: session.cwd,
-                title: session.title,
-                model: session.model,
-                started_ms: session.started_at.timestamp_millis(),
-                updated_ms: session.updated_at.timestamp_millis(),
-                messages: session.message_count,
-            })
+            .map(shared)
+            .collect()
+    }
+
+    fn pinned(&self) -> Vec<SharedSession> {
+        self.store
+            .pinned_sessions(&MachineId::local(), leon_wire::SHARE_PINNED_LIMIT)
+            .unwrap_or_default()
+            .into_iter()
+            .map(shared)
             .collect()
     }
 
@@ -102,6 +102,20 @@ impl ShareSource for StoreShare {
                 })
                 .collect(),
         })
+    }
+}
+
+/// A session of the store as a paired device reads it.
+fn shared(session: leon_core::Session) -> SharedSession {
+    SharedSession {
+        agent: session.agent.as_str().to_owned(),
+        external_id: session.external_id,
+        cwd: session.cwd,
+        title: session.title,
+        model: session.model,
+        started_ms: session.started_at.timestamp_millis(),
+        updated_ms: session.updated_at.timestamp_millis(),
+        messages: session.message_count,
     }
 }
 

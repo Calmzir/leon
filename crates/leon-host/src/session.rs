@@ -7,7 +7,7 @@ use std::time::Duration;
 use leon_link::SecureChannel;
 use leon_wire::{
     ErrorCode, Message, SharedProject, SharedSession, WireError, PROTOCOL_VERSION,
-    SHARE_SESSIONS_LIMIT,
+    SHARE_PINNED_LIMIT, SHARE_SESSIONS_LIMIT,
 };
 use tokio::sync::{mpsc, Notify};
 
@@ -175,11 +175,14 @@ fn handle(
                 let mut sessions: Vec<SharedSession> = share.sessions();
                 let truncated = sessions.len() > SHARE_SESSIONS_LIMIT;
                 sessions.truncate(SHARE_SESSIONS_LIMIT);
+                let mut pinned: Vec<SharedSession> = share.pinned();
+                pinned.truncate(SHARE_PINNED_LIMIT);
                 Message::ShareStateData {
                     id,
                     projects,
                     sessions,
                     truncated,
+                    pinned,
                 }
             },
             move || Message::ShareStateData {
@@ -187,6 +190,7 @@ fn handle(
                 projects: Vec::new(),
                 sessions: Vec::new(),
                 truncated: false,
+                pinned: Vec::new(),
             },
         ),
         Message::ShareTranscript {

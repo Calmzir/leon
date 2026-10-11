@@ -30,6 +30,13 @@ pub trait ShareSource: Send + Sync {
     /// itself, so a source may return more.
     fn sessions(&self) -> Vec<SharedSession>;
 
+    /// The sessions pinned on this machine, in the order of its Pinned
+    /// section. The host cuts the list at
+    /// [`leon_wire::SHARE_PINNED_LIMIT`]. A source without pins has none.
+    fn pinned(&self) -> Vec<SharedSession> {
+        Vec::new()
+    }
+
     /// The transcript of the session `(agent, external_id)` names, in order;
     /// `None` when no such session is held (it may have been removed).
     fn transcript(&self, agent: &str, external_id: &str) -> Option<SharedTranscript>;

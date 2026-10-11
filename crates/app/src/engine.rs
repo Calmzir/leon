@@ -1939,7 +1939,9 @@ impl Engine {
             }
             ConnState::Offline { .. } | ConnState::Closed => return Ok(HostSync::default()),
         }
-        let (projects, sessions, _) = client
+        let leon_link::client::Shared {
+            projects, sessions, ..
+        } = client
             .share_state()
             .await
             .map_err(|error| EngineError::Invalid(error.to_string()))?;

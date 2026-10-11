@@ -312,3 +312,54 @@ export function allRows(tree: ChatTree, words: string[] = []): FoundRow[] {
   const outside = tree.unsorted.flatMap((folder) => folder.rows.map((row) => ({ row, where: folder.title })));
   return found([...inProjects, ...outside], words);
 }
+
+/**
+ * The sessions a computer has pinned, in the order of its Pinned section,
+ * each with where it lives. One that this device continued is shown as its
+ * chat, so that what is running or waiting is said.
+ */
+export function pinnedRows(
+  hostId: string,
+  chats: ChatRecord[],
+  pinned: HistorySession[],
+  tree: ChatTree,
+): FoundRow[] {
+  if (pinned.length === 0) return [];
+  const known = new Map(allRows(tree).map((found) => [found.row.key, found]));
+  const mine = chats.filter((chat) => chat.hostId === hostId);
+  return pinned.map((session) => {
+    const chat = mine.find(
+      (c) =>
+        c.agent === session.agent &&
+        (c.externalId === session.externalId || c.sessionIds.includes(session.externalId)),
+    );
+    const key = chat?.id ?? sessionChatId(hostId, session.agent, session.externalId);
+    const listed = known.get(key);
+    if (listed) return listed;
+    // Older than the history the computer lists: said from the pin itself.
+    const row: ChatRow = chat
+      ? {
+          key,
+          chatId: chat.id,
+          agent: chat.agent,
+          cwd: chat.cwd ?? session.cwd,
+          title: chat.title,
+          updatedAt: chat.updatedAt,
+          canContinue: true,
+          running: chat.activeTurn !== undefined,
+          waiting: chat.activeTurn?.waiting === true,
+        }
+      : {
+          key,
+          session,
+          agent: session.agent,
+          cwd: session.cwd,
+          title: session.title || 'Untitled',
+          updatedAt: session.updatedMs,
+          canContinue: session.canResume,
+          running: false,
+          waiting: false,
+        };
+    return { row, where: baseName(trimmed(row.cwd)) };
+  });
+}

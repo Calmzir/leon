@@ -1277,6 +1277,12 @@ export type SharedState = {
    * There were more sessions than one answer carries.
    */
   truncated: boolean;
+  /**
+   * The sessions it has pinned, in the order of its Pinned section. They
+   * may be older than everything in `sessions`. None from a Leon that
+   * does not say.
+   */
+  pinned: Array<HistorySession>;
 };
 
 /**
@@ -1304,18 +1310,21 @@ const FfiConverterTypeSharedState = (() => {
         projects: FfiConverterSequenceTypeProject.readFromCursor(c),
         sessions: FfiConverterSequenceTypeHistorySession.readFromCursor(c),
         truncated: FfiConverterBool.readFromCursor(c),
+        pinned: FfiConverterSequenceTypeHistorySession.readFromCursor(c),
       };
     }
     writeIntoCursor(value: TypeName, c: Cursor): void {
       FfiConverterSequenceTypeProject.writeIntoCursor(value.projects, c);
       FfiConverterSequenceTypeHistorySession.writeIntoCursor(value.sessions, c);
       FfiConverterBool.writeIntoCursor(value.truncated, c);
+      FfiConverterSequenceTypeHistorySession.writeIntoCursor(value.pinned, c);
     }
     allocationSize(value: TypeName): number {
       return (
         FfiConverterSequenceTypeProject.allocationSize(value.projects) +
         FfiConverterSequenceTypeHistorySession.allocationSize(value.sessions) +
-        FfiConverterBool.allocationSize(value.truncated)
+        FfiConverterBool.allocationSize(value.truncated) +
+        FfiConverterSequenceTypeHistorySession.allocationSize(value.pinned)
       );
     }
   }

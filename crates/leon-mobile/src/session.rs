@@ -187,6 +187,10 @@ pub struct SharedState {
     pub sessions: Vec<HistorySession>,
     /// There were more sessions than one answer carries.
     pub truncated: bool,
+    /// The sessions it has pinned, in the order of its Pinned section. They
+    /// may be older than everything in `sessions`. None from a Leon that
+    /// does not say.
+    pub pinned: Vec<HistorySession>,
 }
 
 /// One message of a transcript.
@@ -340,11 +344,12 @@ impl HostSession {
     pub async fn share_state(&self) -> Result<SharedState, MobileError> {
         let client = self.client.clone();
         on_runtime(async move {
-            let (projects, sessions, truncated) = client.share_state().await?;
+            let shared = client.share_state().await?;
             Ok(SharedState {
-                projects: projects.into_iter().map(project).collect(),
-                sessions: sessions.into_iter().map(history_session).collect(),
-                truncated,
+                projects: shared.projects.into_iter().map(project).collect(),
+                sessions: shared.sessions.into_iter().map(history_session).collect(),
+                truncated: shared.truncated,
+                pinned: shared.pinned.into_iter().map(history_session).collect(),
             })
         })
         .await
