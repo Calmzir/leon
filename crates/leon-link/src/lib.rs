@@ -48,7 +48,7 @@ pub mod test_support;
 pub mod tls;
 
 pub use channel::{accept, connect, LinkError, Rejection, SecureChannel};
-pub use code::{CodeShape, PairingCode};
+pub use code::{parse_text, CodeShape, PairingCode, PairingText};
 pub use identity::{DeviceId, Identity, IdentityError};
 pub use pairing::{
     pair_as_client, pair_as_host, PairError, PairRequest, PairedDevice, PairedHost, PairingOffer,

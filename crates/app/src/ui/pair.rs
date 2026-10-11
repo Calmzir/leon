@@ -18,7 +18,6 @@ use gpui_kit::prelude::*;
 use gpui_kit::{div, Context, Div, Entity, Keystroke, Stateful, Subscription, Task, Window};
 use leon_core::{MachineId, MachineKind};
 use leon_link::client::{ConnState, Failure as ConnFailure};
-use leon_link::PairingCode;
 
 /// What the background pairing reports.
 enum Event {
@@ -46,6 +45,9 @@ pub struct PairUi {
     pub why: Option<MachineId>,
     /// Whether the sidebar's filter had the keyboard when the screen opened.
     pub restore_filter: bool,
+    /// The relay a pasted link named, when it is not the configured one: the
+    /// pairing goes through it, and the machine is saved with it.
+    pub relay: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -74,6 +76,7 @@ impl PairUi {
             running: None,
             why: None,
             restore_filter: false,
+            relay: None,
             _subscriptions: subscriptions,
         }
     }
@@ -99,6 +102,7 @@ impl Shell {
         ui.running = None;
         ui.why = None;
         ui.in_name = false;
+        ui.relay = None;
         ui.restore_filter = from_filter;
         for input in [ui.code.clone(), ui.name.clone()] {
             input.update(cx, |input, cx| input.set_value("", window, cx));
@@ -184,13 +188,39 @@ impl Shell {
         true
     }
 
+    /// Fills the code from the clipboard: a code, or the link "Share this
+    /// machine" copies and shows as a QR.
+    pub(super) fn pair_paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pair_ui.is_running() || self.pair_ui.why.is_some() {
+            return;
+        }
+        let pasted = cx.read_from_clipboard().and_then(|item| item.text());
+        let Some(read) = pasted.as_deref().and_then(leon_link::parse_text) else {
+            self.engine.report(
+                crate::engine::StatusKind::Info,
+                "The clipboard has no pairing code. Copy it on the other computer first.",
+            );
+            return;
+        };
+        let configured = settings::text(cx, "remote_relay_url");
+        self.pair_ui.relay = read.relay.filter(|relay| relay.trim() != configured.trim());
+        let code = read.code.display();
+        self.pair_ui
+            .code
+            .update(cx, |input, cx| input.set_value(code, window, cx));
+        self.pair_ui.in_name = false;
+        self.pair_focus(window, cx);
+        cx.notify();
+    }
+
     /// Starts pairing with what was typed.
     pub(super) fn pair_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pair_ui.is_running() || self.pair_ui.why.is_some() {
             return;
         }
         let typed = self.pair_ui.code.read(cx).value().to_string();
-        let Some(code) = PairingCode::parse(&typed) else {
+        // A link pasted straight into the field is read as one.
+        let Some(read) = leon_link::parse_text(&typed) else {
             self.engine
                 .report(crate::engine::StatusKind::Info, &model::code_hint(&typed).0);
             return;
@@ -202,7 +232,11 @@ impl Shell {
             );
             return;
         };
-        let url = settings::text(cx, "remote_relay_url");
+        let code = read.code;
+        let url = read
+            .relay
+            .or_else(|| self.pair_ui.relay.clone())
+            .unwrap_or_else(|| settings::text(cx, "remote_relay_url"));
         let own = settings::text(cx, "remote_device_name");
         let device = if own.trim().is_empty() {
             leon_host::cli::computer_name()
@@ -324,7 +358,11 @@ impl Shell {
     pub(super) fn render_pair(&self, colours: &Palette, cx: &mut Context<Self>) -> Stateful<Div> {
         let ui = &self.pair_ui;
         let typed = ui.code.read(cx).value().to_string();
-        let (hint, fine) = model::code_hint(&typed);
+        let (hint, fine) = match leon_link::parse_text(&typed) {
+            // A whole link in the field is as good as its code.
+            Some(_) => model::code_hint("ABCD-EFG-HJK"),
+            None => model::code_hint(&typed),
+        };
         let muted = colours.text_muted;
         let (agents_state, agents_note) = self.agents_line();
         let title = if ui.why.is_some() {
@@ -414,7 +452,36 @@ impl Shell {
                         )
                         .child(div().text_color(muted).child(model::HOW_IT_IS_SAFE)),
                 )
-                .child(field("CODE", &ui.code, "pair-code"))
+                .child(
+                    div()
+                        .flex()
+                        .items_end()
+                        .gap(px(8.))
+                        .child(field("CODE", &ui.code, "pair-code").flex_1().min_w_0())
+                        .child(
+                            mono("PASTE")
+                                .id("pair-paste")
+                                .debug_selector(|| "pair-paste".into())
+                                .px(px(10.))
+                                .py(px(6.))
+                                .rounded(metrics::RADIUS())
+                                .border_1()
+                                .border_color(colours.elevated_border)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, window, cx| this.pair_paste(window, cx))),
+                        ),
+                )
+                .children(ui.relay.as_ref().map(|relay| {
+                    div()
+                        .debug_selector(|| "pair-relay".into())
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(led(colours.warning))
+                        .child(div().text_color(muted).child(format!(
+                            "This code is for the relay {relay}, not the one in the settings. It is used for this machine only."
+                        )))
+                }))
                 .child(
                     div()
                         .debug_selector(|| "pair-hint".into())

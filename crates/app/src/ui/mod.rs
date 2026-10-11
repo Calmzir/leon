@@ -51,6 +51,7 @@ mod panes;
 mod paste;
 mod prefs;
 mod projects;
+mod qr;
 mod quit_gently;
 mod restore;
 mod restore_view;
