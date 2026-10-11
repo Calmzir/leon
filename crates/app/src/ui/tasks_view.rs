@@ -90,6 +90,8 @@ pub struct TasksUi {
     pub drop: Option<DropAt>,
     /// The card being dragged.
     pub dragging: Option<String>,
+    /// The details of a card, open beside the columns.
+    pub detail: Option<super::task_detail::DetailUi>,
     /// The loop that reads again while the board is open.
     refresher: Option<Task<()>>,
 }
@@ -116,6 +118,7 @@ impl Default for TasksUi {
             back: None,
             drop: None,
             dragging: None,
+            detail: None,
             refresher: None,
         }
     }
@@ -251,6 +254,7 @@ impl Shell {
         self.tasks_ui.error = None;
         self.tasks_ui.drop = None;
         self.tasks_ui.dragging = None;
+        self.tasks_ui.detail = None;
         self.home.nav = Some(Nav::Tasks);
         self.pane = Pane::Main;
         self.tasks_reload();
@@ -264,6 +268,9 @@ impl Shell {
         if !self.tasks_open() {
             return;
         }
+        // What was being typed is saved, not lost.
+        self.save_detail(cx);
+        self.tasks_ui.detail = None;
         self.tasks_ui.refresher = None;
         self.tasks_ui.follow_title = None;
         self.tasks_ui.drop = None;
@@ -418,6 +425,7 @@ impl Shell {
                 let before = self.tasks_ui.board.clone();
                 self.tasks_ui.board.set_tasks(tasks);
                 let had_error = self.tasks_ui.error.take().is_some();
+                self.detail_reloaded();
                 before != self.tasks_ui.board || had_error
             }
             Err(error) => {
@@ -473,15 +481,25 @@ impl Shell {
         let m = &stroke.modifiers;
         let other = m.platform || m.control || m.alt;
         if stroke.key == "escape" && !other && !m.shift {
-            // The first Escape lets go of a drag, the next leaves the board.
+            // The first Escape lets go of a drag, the next closes the
+            // details, the last leaves the board.
             if self.tasks_ui.drop.is_some() || self.tasks_ui.dragging.is_some() {
                 self.tasks_ui.drop = None;
                 self.tasks_ui.dragging = None;
                 cx.notify();
+            } else if self.detail_open() {
+                self.close_detail(window, cx);
             } else {
                 self.close_tasks(window, cx);
             }
             return true;
+        }
+        if self.detail_open() && self.detail_key(stroke, window, cx) {
+            return true;
+        }
+        // A field of the details has the keyboard: what is typed is text.
+        if self.tasks_typing(window, cx) {
+            return false;
         }
         let Some(action) = task_board::action_of(stroke.key.as_str(), m.shift, other) else {
             return false;
@@ -489,7 +507,9 @@ impl Shell {
         match action {
             Action::Left | Action::Right | Action::Up | Action::Down => {
                 self.tasks_ui.board.step(action);
+                self.follow_detail(window, cx);
             }
+            Action::Details => self.toggle_detail(window, cx),
             Action::CardLeft
             | Action::CardRight
             | Action::CardUp
@@ -622,9 +642,19 @@ impl Shell {
         root = if board.is_empty() && ui.error.is_none() {
             root.child(self.tasks_empty(c, cx))
         } else {
-            root.child(self.tasks_lanes(c, cx))
+            // The columns and, beside them, the details of a card: a drag
+            // still has every column to land in.
+            root.child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .flex()
+                    .child(self.tasks_lanes(c, cx))
+                    .children(self.render_detail(c, cx)),
+            )
         };
-        root = root.child(self.tasks_detail(c, cx));
         root.child(self.tasks_footer(c)).into_any_element()
     }
 
@@ -754,6 +784,7 @@ impl Shell {
             .debug_selector(|| "tasks-columns".into())
             .flex_1()
             .min_h_0()
+            .min_w_0()
             .flex()
             .gap(px(10.))
             .p_3()
@@ -1016,10 +1047,20 @@ impl Shell {
                         .bg(c.signal),
                 )
             })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.tasks_ui.board.select(column, row);
-                cx.notify();
-            }))
+            .on_click(
+                cx.listener(move |this, _: &gpui_kit::ClickEvent, window, cx| {
+                    // A click opens the card: its details are where it is
+                    // read and edited. A drag is another gesture and never
+                    // gets here.
+                    this.tasks_ui.board.select(column, row);
+                    if this.detail_open() {
+                        this.follow_detail(window, cx);
+                    } else {
+                        this.open_detail(window, cx);
+                    }
+                    cx.notify();
+                }),
+            )
             .on_drag(CardDrag { id: id.clone() }, move |_, _, _, cx| {
                 cx.new(|_| CardGhost {
                     title: ghost.0.clone(),
@@ -1074,99 +1115,10 @@ impl Shell {
             )
     }
 
-    /// The card under the cursor, in full, with what can be done to it.
-    fn tasks_detail(&self, c: &Palette, cx: &mut Context<Self>) -> Div {
-        let Some(task) = self.tasks_ui.board.selected() else {
-            return div();
-        };
-        let accent = status_colour(task.status, c);
-        let body: String = task.body.chars().take(320).collect();
-        let action =
-            |id: &'static str, label: &str| super::updates_view::pill(id, label.to_owned(), c);
-        let mut strip = div()
-            .debug_selector(|| "tasks-detail".into())
-            .flex_none()
-            .px_4()
-            .py(px(10.))
-            .border_t_1()
-            .border_color(c.border)
-            .flex()
-            .items_start()
-            .gap_4()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(div().flex_none().size(px(8.)).bg(accent))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(c.text)
-                                    .child(task.title.clone()),
-                            )
-                            .child(
-                                mono(format!(
-                                    "{} · {}",
-                                    task.status.as_str().to_uppercase(),
-                                    task.short_id()
-                                ))
-                                .text_size(metrics::TEXT_SMALL())
-                                .text_color(c.text_faint),
-                            ),
-                    )
-                    .when(!body.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .text_size(metrics::TEXT_SMALL())
-                                .text_color(c.text_muted)
-                                .child(body),
-                        )
-                    }),
-            );
-        let mut buttons = div().flex_none().flex().items_center().gap(px(6.));
-        let has_branch = task.branch.is_some();
-        buttons = buttons.child(
-            action(
-                "tasks-start",
-                if has_branch {
-                    "Open worktree  ⏎"
-                } else {
-                    "Start work  ⏎"
-                },
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.tasks_start(window, cx))),
-        );
-        if task.status != TaskStatus::Done {
-            buttons = buttons.child(action("tasks-done", "Done  d").on_click(cx.listener(
-                |this, _, _, cx| {
-                    if let Some(plan) = this.tasks_ui.board.plan(Action::Done) {
-                        this.tasks_move(plan);
-                    }
-                    cx.notify();
-                },
-            )));
-        }
-        buttons = buttons.child(
-            action("tasks-priority", "Priority  p").on_click(cx.listener(|this, _, _, cx| {
-                this.tasks_raise_priority();
-                cx.notify();
-            })),
-        );
-        strip = strip.child(buttons);
-        strip
-    }
-
     fn tasks_footer(&self, c: &Palette) -> Div {
         let ui = &self.tasks_ui;
         let mut footer = div()
+            .debug_selector(|| "tasks-footer".into())
             .flex_none()
             .px_4()
             .py(px(7.))
@@ -1199,9 +1151,11 @@ impl Shell {
                 .child(what.to_owned())
         };
         footer
+            .child(hint("click", "open the card to edit it"))
             .child(hint("← → ↑ ↓", "move"))
             .child(hint("⇧", "carry the card"))
             .child(hint("drag", "move it anywhere"))
+            .child(hint("e", "details"))
             .child(hint("w", "start work"))
             .child(hint("n", "new"))
             .child(hint("d", "done"))

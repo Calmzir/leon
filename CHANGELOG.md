@@ -25,6 +25,12 @@
   the project. **New task…** in the palette creates one from anywhere, and
   what an agent writes from another process appears within a couple of
   seconds.
+* The details of a card (a click on it, or `e`): a drawer beside
+  the columns to read and edit what a card cannot show: the title, a
+  description of several lines, who it is for, status and priority, labels and
+  where its worktree is, with every action in view (start work, mark done,
+  cancel, delete). Text is saved when you close it or choose another card;
+  while a field has the keyboard, the board's keys are typed and not run.
 * **Start work on a task** (`w`, Enter, or the button of the card's strip):
   makes a worktree named after the task, starts the agent you pick in it with
   the task as its prompt, and moves the card to doing with the branch on it;

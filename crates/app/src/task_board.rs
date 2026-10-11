@@ -13,7 +13,7 @@
 //! the cursor on the same card, and a card the cursor carried to another
 //! column is followed there.
 
-use leon_core::{Task, TaskPriority, TaskStatus};
+use leon_core::{Task, TaskPatch, TaskPriority, TaskStatus};
 
 /// The columns of the board, left to right.
 pub const COLUMNS: [TaskStatus; 5] = [
@@ -61,6 +61,8 @@ pub enum Action {
     /// Start work on the card: a worktree and a session, or open the one it
     /// has.
     Start,
+    /// Open the card's details to read and edit them, or close them.
+    Details,
 }
 
 /// The action of a key pressed while the board has the keyboard, or `None`
@@ -85,6 +87,7 @@ pub fn action_of(key: &str, shift: bool, other_modifier: bool) -> Option<Action>
         ("p", false) => Action::Priority,
         ("g", false) => Action::Scope,
         ("w" | "enter", false) => Action::Start,
+        ("e", false) => Action::Details,
         _ => return None,
     };
     Some(action)
@@ -300,6 +303,75 @@ impl Board {
     }
 }
 
+/// The text fields of a task's details, as the person typed them or as the
+/// store holds them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fields {
+    /// The title.
+    pub title: String,
+    /// The description.
+    pub body: String,
+    /// Who it is for.
+    pub assignee: String,
+}
+
+/// One line: control characters and line breaks as spaces, runs of white
+/// space as one, none at either end. How the store keeps a title.
+pub fn clean_line(text: &str) -> String {
+    text.split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A text: line endings as `\n`, no control character but the tab, no blank
+/// space around it. How the store keeps a description.
+pub fn clean_body(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+/// What saving the fields changes: a patch of only what differs from `base`
+/// once both are cleaned the way the store cleans them, so that a trailing
+/// space is not a change. `Ok(None)` when nothing differs; `Err` with the
+/// sentence to show when the title would be empty.
+pub fn changes(base: &Fields, now: &Fields) -> Result<Option<TaskPatch>, &'static str> {
+    let title = clean_line(&now.title);
+    if title.is_empty() {
+        return Err("A task needs a title.");
+    }
+    let body = clean_body(&now.body);
+    let assignee = clean_line(&now.assignee);
+    let mut patch = TaskPatch::default();
+    if title != clean_line(&base.title) {
+        patch.title = Some(title);
+    }
+    if body != clean_body(&base.body) {
+        patch.body = Some(body);
+    }
+    if assignee != clean_line(&base.assignee) {
+        patch.assignee = Some(Some(assignee).filter(|name| !name.is_empty()));
+    }
+    Ok((!patch.is_empty()).then_some(patch))
+}
+
+/// The labels of a task with `label` added: lower case, one line, and not
+/// twice. `None` when there is nothing to add or it is there already.
+pub fn with_label(labels: &[String], label: &str) -> Option<Vec<String>> {
+    let label = clean_line(label).to_lowercase();
+    if label.is_empty() || labels.contains(&label) {
+        return None;
+    }
+    let mut all = labels.to_vec();
+    all.push(label);
+    Some(all)
+}
+
 /// The priority one step up: none, low, medium, high, urgent and round.
 pub fn next_priority(priority: TaskPriority) -> TaskPriority {
     let all = TaskPriority::ALL;
@@ -402,6 +474,7 @@ mod tests {
             ("g", false, Action::Scope),
             ("w", false, Action::Start),
             ("enter", false, Action::Start),
+            ("e", false, Action::Details),
         ];
         for (key, shift, action) in table {
             assert_eq!(action_of(key, shift, false), Some(action), "{key} {shift}");
@@ -595,6 +668,63 @@ mod tests {
         assert_eq!(board.find("d1"), Some((2, 0)));
         assert_eq!(board.find("n1"), Some((4, 0)));
         assert_eq!(board.find("x1"), None);
+    }
+
+    #[test]
+    fn saving_the_fields_changes_only_what_differs_once_cleaned() {
+        let base = Fields {
+            title: "Fix the login".into(),
+            body: "Users land back.\nUse a cleared jar.".into(),
+            assignee: "ana".into(),
+        };
+        // Nothing typed, or only blank space, or the way a terminal ends a
+        // line: nothing to save.
+        assert_eq!(changes(&base, &base), Ok(None));
+        let spaced = Fields {
+            title: "  Fix   the login ".into(),
+            body: "Users land back.\r\nUse a cleared jar.\n\n".into(),
+            assignee: " ana ".into(),
+        };
+        assert_eq!(changes(&base, &spaced), Ok(None));
+        // One field changed: only that one is in the patch.
+        let renamed = Fields {
+            title: "Fix the SSO login".into(),
+            ..base.clone()
+        };
+        let patch = changes(&base, &renamed).unwrap().unwrap();
+        assert_eq!(patch.title.as_deref(), Some("Fix the SSO login"));
+        assert_eq!((patch.body, patch.assignee), (None, None));
+        // Emptied assignee takes it away; a new body is cleaned.
+        let patch = changes(
+            &base,
+            &Fields {
+                body: "  Now it has more.\r\n".into(),
+                assignee: "   ".into(),
+                ..base.clone()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(patch.body.as_deref(), Some("Now it has more."));
+        assert_eq!(patch.assignee, Some(None));
+        assert_eq!(patch.title, None);
+        // A task needs its title.
+        let untitled = Fields {
+            title: " \n ".into(),
+            ..base.clone()
+        };
+        assert_eq!(changes(&base, &untitled), Err("A task needs a title."));
+    }
+
+    #[test]
+    fn a_label_is_added_once_and_in_lower_case() {
+        let labels = vec!["bug".to_owned()];
+        assert_eq!(
+            with_label(&labels, "  Needs   Review "),
+            Some(vec!["bug".to_owned(), "needs review".to_owned()])
+        );
+        assert_eq!(with_label(&labels, "BUG"), None);
+        assert_eq!(with_label(&labels, "   "), None);
     }
 
     #[test]

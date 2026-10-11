@@ -253,6 +253,11 @@ pub enum Op {
         /// What else is to be said in the line, such as why no setup ran.
         notice: Option<String>,
     },
+    /// Remove a task for good.
+    DeleteTask {
+        /// The task.
+        id: String,
+    },
     /// Change a task.
     UpdateTask {
         /// The task.
@@ -1746,6 +1751,7 @@ impl Engine {
                 self.move_task(&id, status, before.as_deref()).map(Some)
             }
             Op::UpdateTask { id, patch } => self.update_task(&id, &patch).map(Some),
+            Op::DeleteTask { id } => self.delete_task(&id).map(Some),
             Op::StartTask {
                 id,
                 branch,
@@ -3101,6 +3107,12 @@ impl Engine {
             task.status.as_str(),
             task.title
         ))
+    }
+
+    /// Removes a task for good.
+    fn delete_task(&self, id: &str) -> Result<String, EngineError> {
+        let task = self.inner.store.delete_task(id)?;
+        Ok(format!("Deleted {}: {}", task.short_id(), task.title))
     }
 
     /// Writes what starting work on a task means: its branch, `doing` and
@@ -6169,6 +6181,24 @@ branch refs/heads/feature/login
         assert_eq!(task.status, leon_core::TaskStatus::Doing);
         assert_eq!(task.branch.as_deref(), Some("fix-the-login-1a2b3c4d"));
         assert_eq!(task.assignee.as_deref(), Some("claude"));
+    }
+
+    #[tokio::test]
+    async fn a_task_is_deleted_through_the_engine() {
+        let rig = rig(ScriptedRunner::new());
+        let scope = leon_core::MemoryScope::project("/srv/api");
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(scope, "Temporary"), 1)
+            .unwrap()
+            .into_task();
+        rig.engine
+            .run(Op::DeleteTask {
+                id: task.id.clone(),
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Deleted "));
+        assert!(rig.store.task(&task.id).is_err());
     }
 
     #[tokio::test]

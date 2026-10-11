@@ -316,7 +316,7 @@ fn a_card_let_go_outside_the_columns_stays_where_it_was(cx: &mut TestAppContext)
     let id = written_elsewhere(&h, "Stay put", 1, cx);
     let from = h.bounds_of("tasks-card-1-0".to_owned(), cx).unwrap();
     // Over the footer of the board: no column there.
-    let footer = h.bounds_of("tasks-detail".to_owned(), cx).unwrap();
+    let footer = h.bounds_of("tasks-footer".to_owned(), cx).unwrap();
     cx.update_window(h.window.into(), |_, window, cx| {
         window.drag(from.center(), footer.center(), cx);
     })
@@ -334,4 +334,305 @@ fn the_boards_keys_are_not_taken_while_another_overlay_is_up(cx: &mut TestAppCon
     assert_eq!(h.shell(cx, |s| s.overlay), Overlay::Palette);
     h.type_text("n", cx);
     assert_eq!(h.shell(cx, |s| s.overlay), Overlay::Palette);
+}
+
+// ----- the details of a card -------------------------------------------------------------
+
+/// A board of the project "api" with one task, whose drawer is open.
+fn with_the_drawer_open(cx: &mut TestAppContext) -> (Harness, String) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    let id = written_elsewhere(&h, "Fix the login", 1, cx);
+    h.press("e", cx);
+    assert!(h.shows("tasks-drawer", cx));
+    (h, id)
+}
+
+fn field(
+    h: &Harness,
+    cx: &mut TestAppContext,
+    pick: impl Fn(
+        &crate::ui::task_detail::DetailUi,
+    ) -> gpui_kit::Entity<gpui_kit::component::input::InputState>,
+) -> gpui_kit::Entity<gpui_kit::component::input::InputState> {
+    h.shell(cx, |s| {
+        pick(s.tasks_ui.detail.as_ref().expect("the drawer"))
+    })
+}
+
+fn set_text(
+    h: &Harness,
+    cx: &mut TestAppContext,
+    input: &gpui_kit::Entity<gpui_kit::component::input::InputState>,
+    text: &str,
+) {
+    cx.update_window(h.window.into(), |_, window, cx| {
+        input.update(cx, |field, cx| field.set_value(text.to_owned(), window, cx));
+    })
+    .unwrap();
+    h.settle(cx);
+}
+
+fn focus(
+    h: &Harness,
+    cx: &mut TestAppContext,
+    input: &gpui_kit::Entity<gpui_kit::component::input::InputState>,
+) {
+    use gpui_kit::Focusable as _;
+    cx.update_window(h.window.into(), |_, window, cx| {
+        let handle = input.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
+    })
+    .unwrap();
+    h.settle(cx);
+}
+
+#[gpui_kit::test]
+fn e_opens_the_details_and_escape_closes_them_before_the_board(cx: &mut TestAppContext) {
+    let (h, _id) = with_the_drawer_open(cx);
+    assert!(h.shows("task-detail-id", cx));
+    // The actions are in view in the drawer itself.
+    for action in [
+        "task-action-start",
+        "task-action-done",
+        "task-action-cancel",
+        "task-action-delete",
+        "task-action-save",
+    ] {
+        assert!(h.shows(action, cx), "{action}");
+    }
+    h.press("escape", cx);
+    assert!(!h.shows("tasks-drawer", cx));
+    assert_eq!(h.main_kind(cx), "tasks");
+    h.press("escape", cx);
+    assert_ne!(h.main_kind(cx), "tasks");
+}
+
+#[gpui_kit::test]
+fn what_is_typed_in_a_field_is_text_and_not_commands_of_the_board(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    let title = field(&h, cx, |d| d.title.clone());
+    focus(&h, cx, &title);
+    // `n` would ask for a task, `d` finish it, `p` raise it, `g` switch the
+    // board, `w` start work and `?` open the shortcuts.
+    for key in ["n", "d", "p", "g", "w", "?"] {
+        h.press(key, cx);
+    }
+    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::None);
+    assert_eq!(h.main_kind(cx), "tasks");
+    wait_for_the_board(&h, cx);
+    let task = h.store.task(&id).unwrap();
+    assert_eq!(task.status, TaskStatus::Todo);
+    assert_eq!(task.priority, leon_core::TaskPriority::None);
+    assert!(h.shell(cx, |s| s.tasks_ui.detail.is_some()));
+    assert!(matches!(
+        h.shell(cx, |s| s.tasks_ui.which.clone()),
+        Which::Project(_)
+    ));
+}
+
+#[gpui_kit::test]
+fn the_title_and_the_description_are_saved_as_one_patch(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    let title = field(&h, cx, |d| d.title.clone());
+    set_text(&h, cx, &title, "  Fix the SSO login ");
+    let body = h.shell(cx, |s| s.tasks_ui.detail.as_ref().unwrap().body.clone());
+    cx.update_window(h.window.into(), |_, window, cx| {
+        body.update(cx, |field, cx| {
+            field.set_value(
+                "Users land back on the form.\nUse a cleared jar.",
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    h.settle(cx);
+    // The save button says there is something to save, and saves.
+    assert!(h.shows("task-action-save", cx));
+    h.mouse_on(
+        "task-action-save".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_for_the_board(&h, cx);
+    let task = h.store.task(&id).unwrap();
+    assert_eq!(task.title, "Fix the SSO login");
+    assert_eq!(
+        task.body,
+        "Users land back on the form.\nUse a cleared jar."
+    );
+    assert_eq!(task.status, TaskStatus::Todo);
+}
+
+#[gpui_kit::test]
+fn closing_the_details_saves_what_was_typed(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    let assignee = field(&h, cx, |d| d.assignee.clone());
+    set_text(&h, cx, &assignee, "ana");
+    h.press("escape", cx);
+    wait_for_the_board(&h, cx);
+    assert_eq!(h.store.task(&id).unwrap().assignee.as_deref(), Some("ana"));
+    assert!(!h.shows("tasks-drawer", cx));
+}
+
+#[gpui_kit::test]
+fn a_title_left_empty_is_refused_in_the_drawer_and_keeps_it_open(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    let title = field(&h, cx, |d| d.title.clone());
+    set_text(&h, cx, &title, "   ");
+    h.press("escape", cx);
+    assert!(h.shows("tasks-drawer", cx), "it stays open");
+    assert!(h.shows("task-detail-error", cx));
+    assert_eq!(h.store.task(&id).unwrap().title, "Fix the login");
+}
+
+#[gpui_kit::test]
+fn status_priority_and_labels_apply_at_once(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    h.mouse_on(
+        "task-status-review".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_for_the_board(&h, cx);
+    assert_eq!(status_of(&h, &id), TaskStatus::Review);
+    h.mouse_on(
+        "task-priority-urgent".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_for_the_board(&h, cx);
+    assert_eq!(
+        h.store.task(&id).unwrap().priority,
+        leon_core::TaskPriority::Urgent
+    );
+    // A label is typed and added with Enter, and has its own way out.
+    let label = field(&h, cx, |d| d.label.clone());
+    focus(&h, cx, &label);
+    set_text(&h, cx, &label, "  Needs Review ");
+    h.press("enter", cx);
+    wait_for_the_board(&h, cx);
+    assert_eq!(h.store.task(&id).unwrap().labels, ["needs review"]);
+    h.mouse_on(
+        "task-label-remove-0".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_for_the_board(&h, cx);
+    assert!(h.store.task(&id).unwrap().labels.is_empty());
+}
+
+#[gpui_kit::test]
+fn delete_asks_twice_and_removes_the_task(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    h.mouse_on(
+        "task-action-delete".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    assert!(h.store.task(&id).is_ok(), "the first press only asks");
+    assert!(h.shows("tasks-drawer", cx));
+    h.mouse_on(
+        "task-action-delete".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    wait_for_the_board(&h, cx);
+    assert!(h.store.task(&id).is_err());
+    assert!(!h.shows("tasks-drawer", cx));
+    assert_eq!(h.main_kind(cx), "tasks");
+}
+
+#[gpui_kit::test]
+fn the_drawer_follows_the_card_that_is_chosen_and_saves_the_one_it_leaves(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    let first = written_elsewhere(&h, "First", 1, cx);
+    let second = written_elsewhere(&h, "Second", 2, cx);
+    h.press("e", cx);
+    let assignee = field(&h, cx, |d| d.assignee.clone());
+    set_text(&h, cx, &assignee, "ana");
+    // Another card is chosen with the pointer.
+    h.mouse_on("tasks-card-1-1".to_owned(), gpui_kit::MouseButton::Left, cx);
+    wait_for_the_board(&h, cx);
+    assert_eq!(
+        h.store.task(&first).unwrap().assignee.as_deref(),
+        Some("ana")
+    );
+    assert_eq!(
+        h.shell(cx, |s| s.tasks_ui.detail.as_ref().map(|d| d.id.clone())),
+        Some(second)
+    );
+}
+
+#[gpui_kit::test]
+fn a_card_can_still_be_dragged_while_the_details_are_open(cx: &mut TestAppContext) {
+    let (h, id) = with_the_drawer_open(cx);
+    drag_card(&h, "tasks-card-1-0", "tasks-tail-2", 0.5, cx);
+    assert_eq!(status_of(&h, &id), TaskStatus::Doing);
+    assert!(h.shows("tasks-drawer", cx));
+}
+
+#[gpui_kit::test]
+fn the_drawer_and_its_buttons_are_inside_the_board_at_any_width(cx: &mut TestAppContext) {
+    let (h, _id) = with_the_drawer_open(cx);
+    let board = h.bounds_of("tasks".to_owned(), cx).unwrap();
+    for selector in [
+        "tasks-drawer",
+        "task-status-done",
+        "task-priority-urgent",
+        "task-action-start",
+        "task-action-delete",
+        "task-action-save",
+        "task-detail-close",
+    ] {
+        let bounds = h
+            .bounds_of(selector.to_owned(), cx)
+            .unwrap_or_else(|| panic!("{selector} is not drawn"));
+        assert!(
+            bounds.left() >= board.left() && bounds.right() <= board.right(),
+            "{selector} {bounds:?} is outside the board {board:?}"
+        );
+    }
+    // The columns give way to it: every one is still drawn and the drawer
+    // starts where the last of them ends.
+    let drawer = h.bounds_of("tasks-drawer".to_owned(), cx).unwrap();
+    let last = h.bounds_of("tasks-column-4".to_owned(), cx).unwrap();
+    assert!(
+        last.right() <= drawer.left() + px(1.),
+        "{last:?} {drawer:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_click_on_a_card_opens_its_details_with_every_action(cx: &mut TestAppContext) {
+    let h = on_api(cx);
+    open_board(&h, cx);
+    let id = written_elsewhere(&h, "Fix the login", 1, cx);
+    assert!(!h.shows("tasks-drawer", cx));
+    h.mouse_on("tasks-card-1-0".to_owned(), gpui_kit::MouseButton::Left, cx);
+    assert!(h.shows("tasks-drawer", cx));
+    assert_eq!(
+        h.shell(cx, |s| s.tasks_ui.detail.as_ref().map(|d| d.id.clone())),
+        Some(id)
+    );
+    for action in [
+        "task-action-start",
+        "task-action-done",
+        "task-action-cancel",
+        "task-action-delete",
+        "task-action-save",
+        "task-detail-close",
+    ] {
+        assert!(h.shows(action, cx), "{action}");
+    }
+    // The close button closes it, and the board is as it was.
+    h.mouse_on(
+        "task-detail-close".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    assert!(!h.shows("tasks-drawer", cx));
+    assert_eq!(h.main_kind(cx), "tasks");
 }

@@ -2756,7 +2756,8 @@ impl Shell {
         ) || filtering
             || finding
             || self.file_has_keyboard()
-            || self.changes_typing(window, cx);
+            || self.changes_typing(window, cx)
+            || self.tasks_typing(window, cx);
         if self.overlay == Overlay::Palette && self.palette_key(stroke, window, cx) {
             return true;
         }
@@ -3597,6 +3598,7 @@ impl Shell {
                     && !self.terminal_focused()
                     && !self.filter_focused(window, cx)
                     && !self.find_focused(window, cx)
+                    && !self.tasks_typing(window, cx)
             }
             _ => true,
         }

@@ -78,17 +78,44 @@ nothing. Dropping a card where it already is changes nothing.
 | `↑` `↓` or `k` `j` | Cursor to the card above or below |
 | `Shift` + those | Carry the card: to the bottom of the next column, or one place up or down in its own |
 | `w` or `Enter` | Start work on the card (see below), or open its worktree |
+| `e` | Open the card's details beside the columns, or close them |
 | `n` | Ask for the title of a new task, in the cursor's column |
 | `d` | Finish the card |
 | `p` | Raise its priority: none, low, medium, high, urgent, none |
 | `g` | Switch between the project's board and the global one |
-| `Esc` | Let go of a drag, or close the board |
+| `Esc` | Let go of a drag, then close the details, then close the board |
 
-A click selects a card; the strip under the columns shows it in full with its
-buttons. Every change goes through the engine, as every write of the window
+A click on a card opens its details (below). Every change goes through the engine, as every write of the window
 does, so the status line says what was done (`Moved 1a2b3c4d to doing: ...`).
 The open board reads the store every second and a half because an agent writes
 from another process; a card that moved is followed by the cursor.
+
+### The details of a card
+
+A click on a card, or `e` on the one under the cursor, opens a drawer beside the columns (it does not cover them, so a card can still
+be dragged). It holds what a card cannot show:
+
+* the **title** and the **description**, which has several lines;
+* the **status** and the **priority**, as buttons that apply at once;
+* who it is **assigned to** (the agent's mark when it is one);
+* the **labels**: each with its way out, and a field that adds one with Enter;
+* **where the work is**: the branch of its worktree, or that there is none yet;
+* when it was created, by whom, and when it last changed;
+* every **action**, always in view at the bottom: *Start work* (or *Open
+  worktree*), *Mark done* (or *Reopen*), *Cancel task*, *Delete* (it asks
+  twice) and *Save changes*.
+
+The text fields are saved as one patch of only what changed: when asked
+(`Cmd+Enter` or `Ctrl+Enter`, `Enter` in the title or the assignee, or the
+button), when the details close and when another card is chosen. A title that
+would be empty is refused where it is typed. While a field has the keyboard,
+`n`, `d`, `w` and the other keys of the board are typed, not run: only `Esc`
+(save and close), `Enter` as said and `Cmd+Enter` are the drawer's.
+
+The drawer is of one task by its id. A task that an agent moves or cancels
+while it is open is still the one shown; one that is deleted elsewhere says
+"removed elsewhere". Reading the board again never touches what is being
+typed.
 
 ### Start work on a task
 

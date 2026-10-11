@@ -1593,6 +1593,11 @@ card, `p` raises its priority and `g` switches between the project's board and
 the global one; the chips in the header change the project. What an agent
 writes from another process shows up within a couple of seconds.
 
+A click on a card (or `e`) opens its **details** beside the columns: the title, a description of several lines, who it is for, its
+status and priority, its labels, where its worktree is and every action in view
+(start work, mark done, cancel, delete). What is typed is saved when you close
+the details or choose another card; `Cmd+Enter` (`Ctrl+Enter`) saves at once.
+
 **To code a task**, press `w` (or Enter, or **Start work** in the card's strip):
 Leon asks which agent, makes a worktree named after the task (`fix-the-login-1a2b3c4d`),
 starts the agent in it with the task as its prompt, and moves the card to doing
