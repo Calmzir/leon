@@ -613,7 +613,7 @@ impl Shell {
                 self.open_live(id, window, cx);
                 self.pane = pane;
             }
-            Main::Live(_) | Main::Den => {
+            Main::Live(_) | Main::Den | Main::Tasks => {
                 self.main = Main::Empty;
                 self.pane = Pane::Sidebar;
             }
@@ -627,6 +627,12 @@ impl Shell {
         self.home.nav = matches!(self.main, Main::Empty).then_some(super::home::Nav::Home);
         self.sync_focus(window, cx);
         cx.notify();
+    }
+
+    /// What the main pane showed before the Den, for something that takes
+    /// its place and puts that back when it closes.
+    pub(super) fn den_take_back(&mut self) -> Option<(Main, Pane)> {
+        self.den.back.take()
     }
 
     /// Leaves the Den for something else that takes the main pane: nothing

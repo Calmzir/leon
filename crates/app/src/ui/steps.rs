@@ -892,6 +892,11 @@ pub enum Action {
     SetDen(String),
     /// Save the Den's room as a new den with this name.
     SaveDenAs(String),
+    /// Create a task with this title, on the board the window is on.
+    NewTask(String),
+    /// Make a worktree for the selected task and start this agent in it, or
+    /// only a shell when there is none.
+    StartTask(Option<AgentId>),
     /// Give the user's den in use this name.
     RenameDen(String),
     /// Delete the user's den in use.
@@ -1050,6 +1055,8 @@ pub fn is_flow(command: Command) -> bool {
             | Command::NewThemeFromCurrent
             | Command::ChooseDen
             | Command::SaveDenAs
+            | Command::NewTask
+            | Command::StartTask
             | Command::RenameDen
             | Command::DeleteDen
             | Command::MessageLion
@@ -1131,6 +1138,11 @@ pub fn advance(command: Command, answers: &[String], world: &World) -> Outcome {
             [name, ..] => Outcome::Run(Action::NewTheme(name.clone())),
         },
         Command::ChooseDen => choose_den(answers, world),
+        Command::StartTask => start_task(answers, world),
+        Command::NewTask => match answers {
+            [] => text("Task title", "What is to be done", Validate::Required),
+            [title, ..] => Outcome::Run(Action::NewTask(title.clone())),
+        },
         Command::SaveDenAs => match answers {
             [] => text("Den name", "My den", Validate::Required),
             [name, ..] => Outcome::Run(Action::SaveDenAs(name.clone())),
@@ -2594,6 +2606,45 @@ const START: &str = "--start";
 
 /// The agents that can be given a prompt where `info`'s project is: on, with a
 /// verified prompt form, and installed there (or not known to be missing).
+/// "Create worktree for the task": which agent codes it, or none for a worktree
+/// with only a shell in it. The worktree is on this computer, where the board
+/// is, so the agents offered are the ones installed here that take a prompt.
+fn start_task(answers: &[String], world: &World) -> Outcome {
+    let candidates = prompt_candidates(world, &MachineId::local());
+    match answers {
+        [] => {
+            let mut list: Vec<Choice> = candidates
+                .iter()
+                .map(|agent| {
+                    Choice::new(
+                        format::agent_name(*agent),
+                        "starts in a new worktree with the task as its prompt",
+                        agent.as_str(),
+                    )
+                    .agent(*agent)
+                    .current(world.prefs.default_agent == Some(*agent))
+                })
+                .collect();
+            // The agent the settings name first.
+            list.sort_by_key(|choice| !choice.current);
+            list.push(Choice::new(
+                "Only a worktree",
+                "a shell in a new worktree, no agent",
+                NO_AGENT,
+            ));
+            choices("Create the worktree with", list, Custom::No)
+        }
+        [pick, ..] if pick == NO_AGENT => Outcome::Run(Action::StartTask(None)),
+        [pick, ..] => match AgentId::parse(pick).filter(|agent| candidates.contains(agent)) {
+            Some(agent) => Outcome::Run(Action::StartTask(Some(agent))),
+            None => Outcome::Refuse(format!("{pick:?} cannot be given a task here.")),
+        },
+    }
+}
+
+/// The answer of "Create the worktree with" that means no agent.
+const NO_AGENT: &str = "-";
+
 fn prompt_candidates(world: &World, machine: &MachineId) -> Vec<AgentId> {
     let installed = world.installed_on(machine);
     world

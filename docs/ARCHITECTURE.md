@@ -29,7 +29,7 @@ leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3
 
 | Crate | What it is |
 | --- | --- |
-| `leon-core` | Machines, projects, worktrees, sessions and messages, and the `Store` (SQLite) with change notification. No UI, no processes. |
+| `leon-core` | Machines, projects, worktrees, sessions and messages, the shared memory's entries (`store/memory.rs`), the board's tasks (`store/tasks.rs`) and the `Store` (SQLite) with change notification. No UI, no processes. |
 | `leon-history` | Reads the history Claude Code, Codex and opencode keep on disk and turns it into sessions and messages. |
 | `leon-remote` | A `CommandSpec` says what to run and where; `run_on` and `interactive_on` place it on a machine (unchanged locally, `ssh` remotely, with shell quoting and optional connection sharing). Git worktree operations, the changed files and diffs of a checkout and the commit, push and pull request (`changes`, `ship`), how each agent starts and resumes, the machine probe and the connection checklist (`connect`, `diagnosis`) are built on it. A scripted runner makes all of it testable without a process. |
 | `leon-usage` | How much of each agent's limits is left. A provider-neutral model (`AgentUsage`: windows with a used percentage, a reset time and a length, or an explicit `Reason` why nothing is known; staleness is part of it), pure parsers for each source (`codex`, `claude`, `opencode`), the burn-rate `forecast`, the wording (`present`, `view`), `collect_machine` (one bounded command per machine through a `Runner`) and the opt-in `network` sources behind an `Http` trait. No UI. |
@@ -136,7 +136,7 @@ module. See `docs/REMOTE.md` for the security model.
    README lists each one.
 5. **Pure first.** What can be decided without a window is a pure function with
    tests: the tree (`ui/tree.rs`), the palette's questions (`ui/steps.rs`), what
-   a session runs (`launch::plan`), the shared memory's file, block and MCP
+   a session runs (`launch::plan`), the board's MCP answers (`task_mcp`) and command line (`task_cli::parse`), the shared memory's file, block and MCP
    answers (`leon-memory`), key to bytes (`leon_term::keys`), cells to
    runs (`leon_term::layout`), resize maths (`leon_term::size`).
 6. **English everywhere, prose `//!` header on every file.**

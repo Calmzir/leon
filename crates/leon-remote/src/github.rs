@@ -118,6 +118,181 @@ impl<'a, R: Runner> Github<'a, R> {
         Ok(asked.map(|stdout| parse_open_pull_requests(&stdout)))
     }
 
+    /// The repository the folder `cwd` belongs to on GitHub, with its
+    /// address: what a person is asked to confirm before issues are synced.
+    /// `Ok(None)` when `gh` is not there.
+    pub async fn repository(&self, cwd: &str) -> Result<Option<RepoInfo>, GithubError> {
+        let asked = self
+            .ask(cwd, ["repo", "view", "--json", "nameWithOwner,url"])
+            .await?;
+        Ok(asked.and_then(|stdout| parse_repository(&stdout)))
+    }
+
+    /// The issues of `repo`, open and closed, the most recently updated
+    /// first, at most `limit`. `repo` is always named (`-R`): the folder's
+    /// remotes are not asked, so a fork never answers for its upstream.
+    pub async fn issues(
+        &self,
+        cwd: &str,
+        repo: &str,
+        limit: usize,
+    ) -> Result<Option<Vec<Issue>>, GithubError> {
+        let limit = limit.clamp(1, 1000).to_string();
+        let asked = self
+            .ask_with(
+                cwd,
+                vec![
+                    "issue".into(),
+                    "list".into(),
+                    "-R".into(),
+                    repo.into(),
+                    "--state".into(),
+                    "all".into(),
+                    "--limit".into(),
+                    limit,
+                    "--json".into(),
+                    ISSUE_FIELDS.into(),
+                ],
+            )
+            .await?;
+        Ok(asked.map(|stdout| parse_issues(&stdout)))
+    }
+
+    /// Makes the label `name` of `repo` exist (and sets its colour and
+    /// description when it did). `false` when `gh` is not there.
+    pub async fn ensure_label(
+        &self,
+        cwd: &str,
+        repo: &str,
+        name: &str,
+        color: &str,
+        description: &str,
+    ) -> Result<bool, GithubError> {
+        let asked = self
+            .ask_with(
+                cwd,
+                vec![
+                    "label".into(),
+                    "create".into(),
+                    name.into(),
+                    "-R".into(),
+                    repo.into(),
+                    "--force".into(),
+                    format!("--color={color}"),
+                    format!("--description={description}"),
+                ],
+            )
+            .await?;
+        Ok(asked.is_some())
+    }
+
+    /// Opens an issue in `repo` and answers its address. `Ok(None)` when
+    /// `gh` is not there. Labels the repository does not have are the
+    /// caller's to make first ([`Github::ensure_label`]).
+    pub async fn create_issue(
+        &self,
+        cwd: &str,
+        repo: &str,
+        title: &str,
+        body: &str,
+        labels: &[String],
+    ) -> Result<Option<String>, GithubError> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "create".into(),
+            "-R".into(),
+            repo.into(),
+            format!("--title={title}"),
+            format!("--body={body}"),
+        ];
+        args.extend(
+            labels
+                .iter()
+                .filter(|label| !label.contains(','))
+                .map(|label| format!("--label={label}")),
+        );
+        let asked = self.ask_with(cwd, args).await?;
+        Ok(asked.and_then(|stdout| {
+            stdout
+                .lines()
+                .map(str::trim)
+                .rev()
+                .find(|line| line.starts_with("http"))
+                .map(str::to_owned)
+        }))
+    }
+
+    /// Changes an issue: only what `edit` holds. `false` when `gh` is not
+    /// there.
+    pub async fn edit_issue(
+        &self,
+        cwd: &str,
+        repo: &str,
+        number: i64,
+        edit: &IssueEdit,
+    ) -> Result<bool, GithubError> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "edit".into(),
+            number.to_string(),
+            "-R".into(),
+            repo.into(),
+        ];
+        if let Some(title) = &edit.title {
+            args.push(format!("--title={title}"));
+        }
+        if let Some(body) = &edit.body {
+            args.push(format!("--body={body}"));
+        }
+        let plain = |label: &&String| !label.contains(',');
+        args.extend(
+            edit.add_labels
+                .iter()
+                .filter(plain)
+                .map(|label| format!("--add-label={label}")),
+        );
+        args.extend(
+            edit.remove_labels
+                .iter()
+                .filter(plain)
+                .map(|label| format!("--remove-label={label}")),
+        );
+        Ok(self.ask_with(cwd, args).await?.is_some())
+    }
+
+    /// Closes an issue (as not planned when `not_planned`), or opens it
+    /// again. `false` when `gh` is not there.
+    pub async fn set_issue_closed(
+        &self,
+        cwd: &str,
+        repo: &str,
+        number: i64,
+        closed: bool,
+        not_planned: bool,
+    ) -> Result<bool, GithubError> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            if closed { "close" } else { "reopen" }.into(),
+            number.to_string(),
+            "-R".into(),
+            repo.into(),
+        ];
+        if closed && not_planned {
+            args.push("--reason=not planned".into());
+        }
+        Ok(self.ask_with(cwd, args).await?.is_some())
+    }
+
+    async fn ask_with(&self, cwd: &str, args: Vec<String>) -> Result<Option<String>, GithubError> {
+        let command = CommandSpec::new("gh")
+            .args(args)
+            .env("GH_PAGER", "cat")
+            .env("NO_COLOR", "1")
+            .env("GH_PROMPT_DISABLED", "1")
+            .cwd(cwd);
+        self.run_asked(command).await
+    }
+
     /// Runs `gh` with `args` in `cwd` and returns what it printed; `None` when
     /// there is no `gh` on the machine.
     async fn ask<const N: usize>(
@@ -130,6 +305,10 @@ impl<'a, R: Runner> Github<'a, R> {
             .env("GH_PAGER", "cat")
             .env("NO_COLOR", "1")
             .cwd(cwd);
+        self.run_asked(command).await
+    }
+
+    async fn run_asked(&self, command: CommandSpec) -> Result<Option<String>, GithubError> {
         let placed = run_on(self.machine, &command, self.ssh);
         match self.runner.run(&placed).await {
             Ok(output) if output.success() => Ok(Some(output.stdout)),
@@ -142,6 +321,138 @@ impl<'a, R: Runner> Github<'a, R> {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+/// The repository a folder belongs to on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoInfo {
+    /// `owner/name`.
+    pub name: String,
+    /// Its address.
+    pub url: String,
+}
+
+/// An issue as far as tasks use it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issue {
+    /// Its number in the repository.
+    pub number: i64,
+    /// Its address.
+    pub url: String,
+    /// Its title.
+    pub title: String,
+    /// Its body, as GitHub wrote it (`\r\n` and all); empty when it has none.
+    pub body: String,
+    /// Whether it is open.
+    pub open: bool,
+    /// It was closed as not planned.
+    pub not_planned: bool,
+    /// Its labels, as named.
+    pub labels: Vec<String>,
+    /// The first person it is assigned to.
+    pub assignee: Option<String>,
+    /// Its `updatedAt`, as GitHub wrote it.
+    pub updated_at: String,
+}
+
+/// What to change of an issue; what is `None` or empty stays.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueEdit {
+    /// A new title.
+    pub title: Option<String>,
+    /// A new body.
+    pub body: Option<String>,
+    /// Labels to add.
+    pub add_labels: Vec<String>,
+    /// Labels to take away.
+    pub remove_labels: Vec<String>,
+}
+
+impl IssueEdit {
+    /// Whether it changes nothing.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The fields of an issue tasks use.
+const ISSUE_FIELDS: &str = "number,url,title,body,state,stateReason,labels,assignees,updatedAt";
+
+/// The issues `gh issue list --json` printed. An entry without a number is
+/// dropped, and output that is not the expected array yields nothing, as the
+/// other parsers here: a new shape must not take a sync down.
+pub fn parse_issues(stdout: &str) -> Vec<Issue> {
+    let entries = serde_json::from_str::<Vec<Value>>(stdout).unwrap_or_default();
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let number = entry.get("number").and_then(Value::as_i64)?;
+            let text = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let names = |key: &str, field: &str| -> Vec<String> {
+                entry
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.get(field).and_then(Value::as_str))
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            Some(Issue {
+                number,
+                url: text("url").trim().to_owned(),
+                title: text("title"),
+                body: text("body"),
+                open: !text("state").eq_ignore_ascii_case("closed"),
+                not_planned: text("stateReason").eq_ignore_ascii_case("not_planned"),
+                labels: names("labels", "name"),
+                assignee: names("assignees", "login").into_iter().next(),
+                updated_at: text("updatedAt"),
+            })
+        })
+        .collect()
+}
+
+/// The repository `gh repo view --json nameWithOwner,url` printed.
+pub fn parse_repository(stdout: &str) -> Option<RepoInfo> {
+    let value: Value = serde_json::from_str(stdout).ok()?;
+    let name = value.get("nameWithOwner")?.as_str()?.trim();
+    // `owner/name`, and nothing a shell or a path could take another way.
+    let plain = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    let (owner, repo) = name.split_once('/')?;
+    if !plain(owner) || !plain(repo) {
+        return None;
+    }
+    Some(RepoInfo {
+        name: name.to_owned(),
+        url: value
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+    })
+}
+
+/// The number at the end of an issue's address
+/// (`https://github.com/o/r/issues/12`).
+pub fn issue_number_of_url(url: &str) -> Option<i64> {
+    let (_, number) = url.trim().rsplit_once("/issues/")?;
+    number.split(['/', '?', '#']).next()?.parse().ok()
 }
 
 /// The fields of an open pull request the worktree views show.
@@ -489,5 +800,230 @@ mod tests {
         assert!(is_github_url("https://github.com/zavudev/leon.git"));
         assert!(!is_github_url("git@gitlab.com:zavudev/leon.git"));
         assert!(!is_github_url("/srv/code/leon"));
+    }
+
+    /// What `gh issue list --state all --json ...` printed: an open issue
+    /// with labels and an assignee, a closed one that was not planned, a body
+    /// that is `null`, one written on Windows, and an entry without a number.
+    const ISSUES: &str = r#"[
+      {"number":12,"url":"https://github.com/zavudev/api/issues/12","title":"Fix the login",
+       "body":"Users land back.\r\nUse a cleared jar.","state":"OPEN","stateReason":"",
+       "labels":[{"name":"Bug"},{"name":"status:doing"}],
+       "assignees":[{"login":"ana"},{"login":"luis"}],"updatedAt":"2026-10-10T10:00:00Z"},
+      {"number":9,"url":"https://github.com/zavudev/api/issues/9","title":"Old idea",
+       "body":null,"state":"CLOSED","stateReason":"NOT_PLANNED","labels":[],
+       "assignees":[],"updatedAt":"2026-09-01T08:00:00Z"},
+      {"url":"https://github.com/zavudev/api/issues/x","title":"No number"}
+    ]"#;
+
+    #[test]
+    fn issues_are_read_with_their_labels_state_and_first_assignee() {
+        let issues = parse_issues(ISSUES);
+        assert_eq!(issues.len(), 2, "the entry without a number is dropped");
+        let open = &issues[0];
+        assert_eq!(open.number, 12);
+        assert!(open.open && !open.not_planned);
+        assert_eq!(open.labels, ["Bug", "status:doing"]);
+        assert_eq!(open.assignee.as_deref(), Some("ana"));
+        assert_eq!(open.body, "Users land back.\r\nUse a cleared jar.");
+        assert_eq!(open.updated_at, "2026-10-10T10:00:00Z");
+        let closed = &issues[1];
+        assert!(!closed.open && closed.not_planned);
+        assert_eq!(closed.body, "", "a null body is empty");
+        assert_eq!(closed.assignee, None);
+        assert!(parse_issues("not json").is_empty());
+    }
+
+    #[test]
+    fn a_repository_is_read_and_a_name_that_is_not_owner_slash_name_is_refused() {
+        let repo = parse_repository(
+            r#"{"nameWithOwner":"zavudev/leon","url":"https://github.com/zavudev/leon"}"#,
+        )
+        .unwrap();
+        assert_eq!(repo.name, "zavudev/leon");
+        assert_eq!(repo.url, "https://github.com/zavudev/leon");
+        for bad in [
+            r#"{"nameWithOwner":"zavudev"}"#,
+            r#"{"nameWithOwner":"a/b/c"}"#,
+            r#"{"nameWithOwner":"a/b c"}"#,
+            r#"{"nameWithOwner":"a/;rm"}"#,
+            "oops",
+        ] {
+            assert_eq!(parse_repository(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_number_of_an_issue_is_at_the_end_of_its_address() {
+        assert_eq!(
+            issue_number_of_url("https://github.com/zavudev/api/issues/42\n"),
+            Some(42)
+        );
+        assert_eq!(
+            issue_number_of_url("https://github.com/zavudev/api/issues/42#issuecomment-1"),
+            Some(42)
+        );
+        assert_eq!(
+            issue_number_of_url("https://github.com/zavudev/api/pull/42"),
+            None
+        );
+    }
+
+    fn calls_of(runner: &ScriptedRunner) -> Vec<Vec<String>> {
+        runner.calls().into_iter().map(|call| call.args).collect()
+    }
+
+    #[tokio::test]
+    async fn every_call_about_issues_names_the_repository() {
+        let runner = ScriptedRunner::new()
+            .reply(Output::ok(ISSUES.to_owned()))
+            .reply(Output::ok(String::new()))
+            .reply(Output::ok(
+                "Creating issue in zavudev/api\n\nhttps://github.com/zavudev/api/issues/77\n"
+                    .to_owned(),
+            ))
+            .reply(Output::ok(String::new()))
+            .reply(Output::ok(String::new()))
+            .reply(Output::ok(String::new()));
+        let (machine, ssh) = (local(), ssh());
+        let github = Github::new(&runner, &machine, &ssh);
+        let repo = "zavudev/api";
+        let issues = github.issues("/srv/api", repo, 50).await.unwrap().unwrap();
+        assert_eq!(issues.len(), 2);
+        assert!(github
+            .ensure_label("/srv/api", repo, "status:doing", "fbca04", "Leon: doing")
+            .await
+            .unwrap());
+        let url = github
+            .create_issue(
+                "/srv/api",
+                repo,
+                "-Rotate the key",
+                "- first\n- second",
+                &["status:todo".to_owned(), "a,b".to_owned(), "bug".to_owned()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            url.as_deref(),
+            Some("https://github.com/zavudev/api/issues/77")
+        );
+        assert!(github
+            .edit_issue(
+                "/srv/api",
+                repo,
+                12,
+                &IssueEdit {
+                    title: Some("New title".into()),
+                    body: Some("".into()),
+                    add_labels: vec!["status:review".into()],
+                    remove_labels: vec!["status:doing".into()],
+                },
+            )
+            .await
+            .unwrap());
+        assert!(github
+            .set_issue_closed("/srv/api", repo, 12, true, true)
+            .await
+            .unwrap());
+        assert!(github
+            .set_issue_closed("/srv/api", repo, 12, false, false)
+            .await
+            .unwrap());
+
+        let calls = calls_of(&runner);
+        let args = |call: usize| calls[call].iter().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(
+            args(0),
+            [
+                "issue",
+                "list",
+                "-R",
+                "zavudev/api",
+                "--state",
+                "all",
+                "--limit",
+                "50",
+                "--json",
+                ISSUE_FIELDS
+            ]
+        );
+        assert_eq!(
+            args(1),
+            [
+                "label",
+                "create",
+                "status:doing",
+                "-R",
+                "zavudev/api",
+                "--force",
+                "--color=fbca04",
+                "--description=Leon: doing"
+            ]
+        );
+        // A title or a body that starts with a dash is a value, not a flag,
+        // and a label with a comma (which gh would split) is left out.
+        assert_eq!(
+            args(2),
+            [
+                "issue",
+                "create",
+                "-R",
+                "zavudev/api",
+                "--title=-Rotate the key",
+                "--body=- first\n- second",
+                "--label=status:todo",
+                "--label=bug"
+            ]
+        );
+        assert_eq!(
+            args(3),
+            [
+                "issue",
+                "edit",
+                "12",
+                "-R",
+                "zavudev/api",
+                "--title=New title",
+                "--body=",
+                "--add-label=status:review",
+                "--remove-label=status:doing"
+            ]
+        );
+        assert_eq!(
+            args(4),
+            [
+                "issue",
+                "close",
+                "12",
+                "-R",
+                "zavudev/api",
+                "--reason=not planned"
+            ]
+        );
+        assert_eq!(args(5), ["issue", "reopen", "12", "-R", "zavudev/api"]);
+        // Every one of them is asked in the project's folder, never prompting.
+        assert!(runner
+            .calls()
+            .iter()
+            .all(|call| call.cwd.as_deref() == Some("/srv/api")
+                && call
+                    .env
+                    .contains(&("GH_PROMPT_DISABLED".into(), "1".into()))));
+    }
+
+    #[tokio::test]
+    async fn the_repository_is_asked_of_the_folder() {
+        let runner = ScriptedRunner::new().reply(Output::ok(
+            r#"{"nameWithOwner":"zavudev/api","url":"https://github.com/zavudev/api"}"#.to_owned(),
+        ));
+        let (machine, ssh) = (local(), ssh());
+        let github = Github::new(&runner, &machine, &ssh);
+        let repo = github.repository("/srv/api").await.unwrap().unwrap();
+        assert_eq!(repo.name, "zavudev/api");
+        assert_eq!(
+            calls_of(&runner)[0],
+            ["repo", "view", "--json", "nameWithOwner,url"]
+        );
     }
 }

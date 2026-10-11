@@ -27,6 +27,8 @@ pub enum StoreChange {
     Usage,
     /// The memory agents share was added to, changed or forgotten.
     Memory,
+    /// Tasks of the board were added, changed, moved or removed.
+    Tasks,
     /// Anything may have changed; re-read everything that is displayed.
     Everything,
 }

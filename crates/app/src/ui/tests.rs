@@ -806,6 +806,7 @@ impl Harness {
     fn main_kind(&self, cx: &mut TestAppContext) -> String {
         self.shell(cx, |shell| match &shell.main {
             Main::Empty => "empty".to_owned(),
+            Main::Tasks => "tasks".to_owned(),
             Main::Project(id) => format!(
                 "project:{}",
                 shell
@@ -3270,6 +3271,26 @@ fn the_question_mark_opens_the_shortcuts_sheet_and_escape_closes_it(cx: &mut Tes
     h.press("escape", cx);
     assert_eq!(h.shell(cx, |s| s.overlay), Overlay::None);
     assert!(!h.shows("shortcuts-sheet", cx));
+}
+
+#[gpui_kit::test]
+fn the_sheets_search_filters_the_lines_and_typing_stays_in_its_field(cx: &mut TestAppContext) {
+    let h = open(cx, ScriptedRunner::new());
+    h.type_text("?", cx);
+    assert!(h.shows("sheet-search", cx));
+    // The letters go to the field, not to the commands they are keys of.
+    h.type_text("palette", cx);
+    assert_eq!(h.shell(cx, |s| s.sheet_query.clone()), "palette");
+    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::Shortcuts);
+    assert!(!h.shows("sheet-empty", cx));
+    h.type_text("zzzz", cx);
+    assert!(h.shows("sheet-empty", cx));
+    // The first Escape clears the search; the second closes the sheet.
+    h.press("escape", cx);
+    assert_eq!(h.shell(cx, |s| s.sheet_query.clone()), "");
+    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::Shortcuts);
+    h.press("escape", cx);
+    assert_eq!(h.shell(cx, |s| s.overlay), Overlay::None);
 }
 
 #[gpui_kit::test]
@@ -5776,7 +5797,11 @@ mod live {
         // The card is the overlay's: elevated, anchored near the row.
         let menu = h.bounds_of("context-menu".to_owned(), cx).unwrap();
         let row = h.bounds_of(format!("tree-row-{at}"), cx).unwrap();
-        assert!(menu.top() >= row.top() - px(2.), "{menu:?} for {row:?}");
+        // At the row: below it, or moved up as far as the window needs.
+        assert!(
+            menu.top() <= row.bottom() && menu.bottom() >= row.top(),
+            "{menu:?} for {row:?}"
+        );
         // A click outside closes it.
         let layer = h.bounds_of("menu-layer".to_owned(), cx).unwrap();
         let mut visual = VisualTestContext::from_window(h.window.into(), cx);
@@ -7893,6 +7918,13 @@ mod tests_screen;
 #[cfg(leon_posix_tests)]
 #[path = "tests_usage.rs"]
 mod tests_usage;
+
+#[path = "tests_tasks.rs"]
+mod tests_tasks;
+
+#[cfg(leon_posix_tests)]
+#[path = "tests_task_work.rs"]
+mod tests_task_work;
 
 #[cfg(leon_posix_tests)]
 #[path = "tests_notify.rs"]

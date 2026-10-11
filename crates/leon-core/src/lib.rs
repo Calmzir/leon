@@ -43,6 +43,10 @@ pub use store::search::{
     fts_query, snippet_segments, SearchHit, SearchQuery, SNIPPET_ELLIPSIS, SNIPPET_END,
     SNIPPET_START,
 };
+pub use store::task_sync::{SyncBase, SyncConfig, TaskLink, GITHUB};
+pub use store::tasks::{
+    NewTask, SavedTask, Task, TaskError, TaskFilter, TaskHit, TaskPatch, TaskPriority, TaskStatus,
+};
 pub use store::{
     history_overview_at, import_cursors_at, set_import_cursor_in, set_session_account_in,
     set_session_tokens_in, upsert_session_in, AgentOverview, ImportRun, KeeperRef, SavedLayout,
