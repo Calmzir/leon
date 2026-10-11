@@ -355,7 +355,7 @@ impl Shell {
         }
         // So is one asked from the board of tasks.
         if std::mem::take(&mut self.tasks_ui.return_from_palette) {
-            self.return_to_tasks(cx);
+            self.return_to_tasks(window, cx);
         }
         cx.notify();
     }

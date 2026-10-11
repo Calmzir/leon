@@ -127,8 +127,6 @@ pub enum Overlay {
     Connect,
     /// The usage view: how much of each agent's limits is left.
     Usage,
-    /// The board of tasks.
-    Tasks,
     /// "Connect a machine, with a code".
     Pair,
     /// "Share this machine".
@@ -464,6 +462,8 @@ pub enum Main {
     Live(LiveId),
     /// The Den: every live agent session as a lion at work.
     Den,
+    /// The board of tasks.
+    Tasks,
 }
 
 /// The application window's view.
@@ -804,7 +804,7 @@ impl Shell {
                         // A project somebody just added may be asked about.
                         this.show_memory_offer(cx);
                         // The board shows what the engine just wrote.
-                        if this.overlay == Overlay::Tasks {
+                        if this.tasks_open() {
                             this.tasks_reload();
                         }
                         cx.notify()
@@ -1080,7 +1080,7 @@ impl Shell {
                     && !self.files.contains_key(id)
                     && !self.changes.contains_key(id)
             }
-            Main::Empty | Main::Session(_) | Main::Den => false,
+            Main::Empty | Main::Session(_) | Main::Den | Main::Tasks => false,
         };
         if gone {
             self.main = Main::Empty;
@@ -2016,7 +2016,7 @@ impl Shell {
                 .map(|session| session.machine.clone())
                 .or_else(|| self.files.get(id).map(|doc| doc.machine.clone()))
                 .or_else(|| self.changes.get(id).map(|view| view.target.machine.clone())),
-            Main::Empty | Main::Den => None,
+            Main::Empty | Main::Den | Main::Tasks => None,
         };
         let found = if self.pane == Pane::Sidebar {
             from_row().or_else(from_main)
@@ -2095,6 +2095,15 @@ impl Shell {
                         Some((session.machine.clone(), None, session.cwd.clone()))
                     }
                 },
+                Main::Tasks => {
+                    let id = self.tasks_ui.project.clone()?;
+                    let entry = self.snapshot.project(&id)?;
+                    Some((
+                        entry.project.machine_id.clone(),
+                        Some(id),
+                        entry.project.root.clone(),
+                    ))
+                }
                 Main::Empty | Main::Den => None,
             }
         };
@@ -2690,15 +2699,20 @@ impl Shell {
         if self.overlay == Overlay::Usage && self.usage_key(stroke, window, cx) {
             return true;
         }
-        if self.overlay == Overlay::Tasks && self.tasks_key(stroke, window, cx) {
-            return true;
-        }
         // The Den has the keyboard while it is the main pane's and nothing
         // is open over it: its own keys come before the tree's.
         if self.overlay == Overlay::None
             && self.pane == Pane::Main
             && self.den_open()
             && self.den_key(stroke, window, cx)
+        {
+            return true;
+        }
+        // So is the board of tasks.
+        if self.overlay == Overlay::None
+            && self.pane == Pane::Main
+            && self.tasks_open()
+            && self.tasks_key(stroke, window, cx)
         {
             return true;
         }
@@ -3072,7 +3086,6 @@ impl Shell {
                 | Overlay::Problems
                 | Overlay::Connect
                 | Overlay::Usage
-                | Overlay::Tasks
                 | Overlay::Pair
                 | Overlay::Share
                 | Overlay::AddProject
@@ -3121,11 +3134,7 @@ impl Shell {
                 self.overlay = Overlay::None;
                 self.focus.focus(window, cx);
             }
-            Overlay::Tasks => {
-                self.close_tasks();
-                self.overlay = Overlay::None;
-                self.focus.focus(window, cx);
-            }
+
             Overlay::AddProject | Overlay::NewWorktree => {
                 self.overlay = Overlay::None;
                 self.new_worktree_ui = None;
@@ -3525,6 +3534,9 @@ impl Shell {
                                 this.forget_row_drop();
                                 cx.notify();
                             }
+                            if this.forget_card_drop() {
+                                cx.notify();
+                            }
                         });
                     }
                 });
@@ -3536,6 +3548,10 @@ impl Shell {
                         released.update(cx, |this, cx| {
                             if this.row_drop_target.is_some() {
                                 this.finish_row_drop();
+                                cx.notify();
+                            }
+                            if this.tasks_ui.drop.is_some() || this.tasks_ui.dragging.is_some() {
+                                this.finish_card_drop();
                                 cx.notify();
                             }
                         });
@@ -4030,7 +4046,6 @@ impl Shell {
             Overlay::Settings => self.render_settings(colours, cx).into_any_element(),
             Overlay::Connect => self.render_connect(colours, cx).into_any_element(),
             Overlay::Usage => self.render_usage(colours, cx).into_any_element(),
-            Overlay::Tasks => self.render_tasks(colours, cx).into_any_element(),
             Overlay::Pair => self.render_pair(colours, cx).into_any_element(),
             Overlay::Share => self.render_share(colours, cx).into_any_element(),
             Overlay::Notes => self.render_notes(colours, cx).into_any_element(),

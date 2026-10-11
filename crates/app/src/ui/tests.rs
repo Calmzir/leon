@@ -806,6 +806,7 @@ impl Harness {
     fn main_kind(&self, cx: &mut TestAppContext) -> String {
         self.shell(cx, |shell| match &shell.main {
             Main::Empty => "empty".to_owned(),
+            Main::Tasks => "tasks".to_owned(),
             Main::Project(id) => format!(
                 "project:{}",
                 shell

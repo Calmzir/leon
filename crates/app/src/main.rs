@@ -348,6 +348,7 @@ fn main() {
         }
     };
     let open_den = options.den;
+    let open_tasks = options.tasks;
     // Made-up lions for the Den, in a development build only: a way to
     // look at a full den without starting a dozen agents.
     let den_cast = if cfg!(debug_assertions) {
@@ -406,6 +407,9 @@ fn main() {
                     let mut shell = ui::Shell::new(engine, options, window, cx);
                     if open_den {
                         shell.show_den(window, cx);
+                    }
+                    if open_tasks {
+                        shell.show_tasks(window, cx);
                     }
                     shell
                 })

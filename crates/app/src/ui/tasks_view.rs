@@ -1,45 +1,78 @@
 //! The board of tasks: the window's part.
 //!
-//! An overlay over the whole window that shows the tasks of the project the
-//! window is on (or the global board) in columns, the way `leon task board`
-//! prints them, kept in step with the agents that write to it from other
-//! processes. Everything it decides is in `task_board` (the keys, the cursor,
-//! what a key that carries a card asks for, which board is shown); this file
-//! reads the store, hands the plans to the engine and draws.
+//! The board takes the place of the main pane ([`Main::Tasks`]), as the Den
+//! does, and the sidebar stays: a worktree made from a card shows up in the
+//! tree beside the board. The command that opens it closes it again, as
+//! Escape does, and both put back what the main pane showed.
+//!
+//! Everything the board decides is in `task_board` (the keys, the cursor, what
+//! a key or a drop asks for, which board is shown); this file reads the store,
+//! hands the plans to the engine and draws.
 //!
 //! **Reading.** The board is read from the store when it opens, whenever the
-//! engine says something changed, and every [`REFRESH`] while it is open: an
-//! agent's `leon task` or MCP call runs in another process, and the
+//! engine says something changed, and every [`REFRESH`] while it is the main
+//! pane: an agent's `leon task` or MCP call runs in another process, and the
 //! window's store is never told about what another process wrote.
 //!
 //! **Writing.** Never here: a moved card, a new task and a new priority are
 //! engine operations (`Op::MoveTask`, `Op::AddTask`, `Op::UpdateTask`), as
 //! every write of the window is. The title of a new task is asked in the
-//! palette, as every question is, and the board is back when it is answered.
+//! palette, as every question is, and the board has the keyboard back when it
+//! is answered.
+//!
+//! **Dragging.** A card is dragged with the pointer from any column to any
+//! place of any column. While a drag goes on the window's sheet takes the
+//! pointer (see `Shell::row_drop_listeners`), so no element is hovered: every
+//! card and every empty tail of a column reports each move of the drag and
+//! answers only when the pointer is inside its own bounds, a line marks where
+//! the card would land, and the window-wide release completes the drop from
+//! what the moves saw last ([`Shell::finish_card_drop`]). A release outside
+//! the columns, or Escape, drops nothing.
 
 use std::time::Duration;
 
 use gpui_kit::prelude::*;
-use gpui_kit::{div, Context, Div, Stateful, Task, Window};
-use leon_core::{store::memory::normalized, MemoryScope, TaskPatch, TaskStatus};
+use gpui_kit::{
+    div, AnyElement, Context, Div, DragMoveEvent, FontWeight, Hsla, Render, SharedString, Stateful,
+    Task, Window,
+};
+use leon_core::{
+    store::memory::normalized, MemoryScope, ProjectId, Task as Card, TaskPatch, TaskPriority,
+    TaskStatus,
+};
 
-use super::shell::{Overlay, Shell};
-use super::updates_view::pill;
-use super::widgets::{mono, section_label};
+use super::home::Nav;
+use super::shell::{Main, Pane, Shell};
+use super::widgets::{key_cap, mark, mono, Lion};
 use crate::engine::Op;
+use crate::icons::{agent_icon, icon, IconName};
 use crate::keys::Command;
 use crate::task_board::{self, Action, Board, Which, COLUMNS, PER_COLUMN};
 use crate::theme::{metrics, px, Palette};
 
-/// How often the open board reads the store again.
+/// How often the board, while it is the main pane, reads the store again.
 pub const REFRESH: Duration = Duration::from_millis(1500);
 
-/// What the window keeps of the board while it is open.
+/// Where a released drag would put the card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DropAt {
+    /// The card dragged.
+    pub id: String,
+    /// The column it would land in.
+    pub column: usize,
+    /// Before the card at this place of the column as it is drawn; the
+    /// number of cards for the end.
+    pub index: usize,
+}
+
+/// What the window keeps of the board while it is the main pane.
 pub struct TasksUi {
     /// The cards and the cursor.
     pub board: Board,
     /// The board that is shown.
     pub which: Which,
+    /// The project of `which`, when it is one the window lists.
+    pub project: Option<ProjectId>,
     /// Why it is not the one that may be expected, when it is not.
     pub note: Option<&'static str>,
     /// The person switched to the global board.
@@ -51,6 +84,12 @@ pub struct TasksUi {
     pub follow_title: Option<String>,
     /// The store could not be read.
     pub error: Option<String>,
+    /// What the main pane showed before, to put back.
+    pub back: Option<(Main, Pane)>,
+    /// Where a released drag would land.
+    pub drop: Option<DropAt>,
+    /// The card being dragged.
+    pub dragging: Option<String>,
     /// The loop that reads again while the board is open.
     refresher: Option<Task<()>>,
 }
@@ -60,42 +99,280 @@ impl Default for TasksUi {
         Self {
             board: Board::new(),
             which: Which::Global,
+            project: None,
             note: None,
             want_global: false,
             return_from_palette: false,
             follow_title: None,
             error: None,
+            back: None,
+            drop: None,
+            dragging: None,
             refresher: None,
         }
     }
 }
 
+/// What is dragged: a card, by its id.
+#[derive(Clone)]
+struct CardDrag {
+    id: String,
+}
+
+/// The card as it follows the pointer: a lifted copy of the real one.
+struct CardGhost {
+    title: String,
+    meta: String,
+    stripe: Option<Hsla>,
+    palette: Palette,
+}
+
+impl Render for CardGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let c = self.palette;
+        div()
+            .w(px(240.))
+            .flex()
+            .rounded(metrics::RADIUS())
+            .border_1()
+            .border_color(c.signal)
+            .bg(c.surface_2)
+            .shadow_md()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(3.))
+                    .bg(self.stripe.unwrap_or(c.elevated_border)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .text_size(metrics::TEXT_BODY())
+                            .text_color(c.text)
+                            .child(self.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(metrics::TEXT_SMALL())
+                            .text_color(c.text_muted)
+                            .child(self.meta.clone()),
+                    ),
+            )
+    }
+}
+
+/// The colour a column is told by: its pip, its count and the wash of its
+/// lane.
+fn status_colour(status: TaskStatus, c: &Palette) -> Hsla {
+    match status {
+        TaskStatus::Backlog => c.text_muted,
+        TaskStatus::Todo => c.info,
+        TaskStatus::Doing => c.success,
+        TaskStatus::Review => c.warning,
+        TaskStatus::Done | TaskStatus::Canceled => c.text_faint,
+    }
+}
+
+/// The stripe of a card of this priority, when it has one.
+fn priority_colour(priority: TaskPriority, c: &Palette) -> Option<Hsla> {
+    match priority {
+        TaskPriority::Urgent => Some(c.error),
+        TaskPriority::High => Some(c.warning),
+        TaskPriority::Medium => Some(c.info),
+        TaskPriority::Low => Some(c.text_faint),
+        TaskPriority::None => None,
+    }
+}
+
+/// The line under a card's title: its id, its priority and who it is for.
+fn meta_of(task: &Card) -> String {
+    let mut parts: Vec<String> = vec![task.short_id().to_owned()];
+    if task.priority != TaskPriority::None {
+        parts.push(task.priority.as_str().to_owned());
+    }
+    if let Some(assignee) = &task.assignee {
+        parts.push(format!("@{assignee}"));
+    }
+    parts.join("  ")
+}
+
 impl Shell {
+    /// Whether the board is what the main pane shows.
+    pub(super) fn tasks_open(&self) -> bool {
+        matches!(self.main, Main::Tasks)
+    }
+
+    /// Opens the board, if it is not open: what `--tasks` asks at the start.
+    pub fn show_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tasks_open() {
+            self.toggle_tasks(window, cx);
+        }
+    }
+
     /// Opens the board, or closes it when it is open.
     pub(super) fn toggle_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.overlay == Overlay::Tasks {
-            self.close_overlay(window, cx);
+        if self.tasks_open() {
+            self.close_tasks(window, cx);
             return;
         }
         self.close_overlay(window, cx);
-        self.overlay = Overlay::Tasks;
-        self.open_tasks(cx);
+        let (which, project, note) = self.tasks_pick();
+        // What goes back when it closes: the main pane as it was, or under
+        // the Den when that is what it was showing.
+        let back = if self.den_open() {
+            let back = self.den_take_back();
+            self.den_leave(cx);
+            back.unwrap_or((Main::Empty, Pane::Sidebar))
+        } else {
+            (std::mem::replace(&mut self.main, Main::Empty), self.pane)
+        };
+        self.main = Main::Tasks;
+        self.tasks_ui.back = Some(back);
+        self.tasks_ui.which = which;
+        self.tasks_ui.project = project;
+        self.tasks_ui.note = note;
+        self.tasks_ui.error = None;
+        self.tasks_ui.drop = None;
+        self.tasks_ui.dragging = None;
+        self.home.nav = Some(Nav::Tasks);
+        self.pane = Pane::Main;
+        self.tasks_reload();
+        self.tasks_keep_fresh(cx);
         self.focus.focus(window, cx);
         cx.notify();
     }
 
-    /// Picks the board, reads it and starts keeping it fresh.
-    pub(super) fn open_tasks(&mut self, cx: &mut Context<Self>) {
-        self.tasks_ui.error = None;
-        let (which, note) = self.task_board_now();
+    /// Closes the board and puts back what the main pane showed.
+    pub(super) fn close_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tasks_open() {
+            return;
+        }
+        self.tasks_ui.refresher = None;
+        self.tasks_ui.follow_title = None;
+        self.tasks_ui.drop = None;
+        self.tasks_ui.dragging = None;
+        let (main, pane) = self
+            .tasks_ui
+            .back
+            .take()
+            .unwrap_or((Main::Empty, Pane::Sidebar));
+        match main {
+            // A terminal takes the keyboard back as when it is opened.
+            Main::Live(id) if self.live.get(id).is_some() => {
+                self.main = Main::Empty;
+                self.open_live(id, window, cx);
+                self.pane = pane;
+            }
+            Main::Live(_) | Main::Den | Main::Tasks => {
+                self.main = Main::Empty;
+                self.pane = Pane::Sidebar;
+            }
+            other => {
+                self.main = other;
+                self.pane = pane;
+            }
+        }
+        self.home.nav = matches!(self.main, Main::Empty).then_some(Nav::Home);
+        self.sync_focus(window, cx);
+        cx.notify();
+    }
+
+    /// The board to show on opening, with the project it belongs to: the one
+    /// the window is on, else the one that was shown last, else the first
+    /// project of this computer, else the global one.
+    fn tasks_pick(&self) -> (Which, Option<ProjectId>, Option<&'static str>) {
+        let here = self.here();
+        let local = here.as_ref().is_none_or(|here| here.machine.is_local());
+        let mut root = here.as_ref().and_then(|here| match &here.project {
+            Some(id) => self
+                .snapshot
+                .project(id)
+                .map(|entry| entry.project.root.clone()),
+            None => self
+                .engine
+                .store()
+                .memory_root(&here.machine, &here.cwd)
+                .ok()
+                .flatten(),
+        });
+        if local && root.is_none() {
+            root = match &self.tasks_ui.which {
+                Which::Project(last) => Some(last.clone()),
+                Which::Global => None,
+            }
+            .filter(|last| self.local_project(last).is_some())
+            .or_else(|| {
+                self.board_projects()
+                    .first()
+                    .map(|(_, _, root)| root.clone())
+            });
+        }
+        let (which, note) = task_board::choose(local, root, self.tasks_ui.want_global);
+        let project = match &which {
+            Which::Project(root) => self.local_project(root).map(|(id, _)| id),
+            Which::Global => None,
+        };
+        (which, project, note)
+    }
+
+    /// The projects of this computer the board can show: id, name and root.
+    pub(super) fn board_projects(&self) -> Vec<(ProjectId, String, String)> {
+        self.snapshot
+            .projects
+            .iter()
+            .filter(|entry| entry.project.machine_id.is_local())
+            .map(|entry| {
+                (
+                    entry.project.id.clone(),
+                    self.project_label(&entry.project),
+                    entry.project.root.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// The project of this computer with this root.
+    fn local_project(&self, root: &str) -> Option<(ProjectId, String)> {
+        let key = leon_core::path::key(root);
+        self.snapshot
+            .projects
+            .iter()
+            .find(|entry| {
+                entry.project.machine_id.is_local()
+                    && leon_core::path::key(&entry.project.root) == key
+            })
+            .map(|entry| (entry.project.id.clone(), entry.project.root.clone()))
+    }
+
+    /// Shows another board: a project's, or the global one.
+    pub(super) fn tasks_show(&mut self, which: Which) {
+        self.tasks_ui.want_global = which == Which::Global;
+        self.tasks_ui.project = match &which {
+            Which::Project(root) => self.local_project(root).map(|(id, _)| id),
+            Which::Global => None,
+        };
         self.tasks_ui.which = which;
-        self.tasks_ui.note = note;
+        self.tasks_ui.note = None;
+        self.tasks_ui.drop = None;
         self.tasks_reload();
+    }
+
+    /// Reads the board again while it is the main pane.
+    fn tasks_keep_fresh(&mut self, cx: &mut Context<Self>) {
         self.tasks_ui.refresher = Some(cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(REFRESH).await;
             let open = this
                 .update(cx, |this, cx| {
-                    if this.overlay != Overlay::Tasks {
+                    if !this.tasks_open() {
                         return false;
                     }
                     if this.tasks_reload() {
@@ -108,32 +385,6 @@ impl Shell {
                 return;
             }
         }));
-    }
-
-    /// Stops keeping the board fresh: it was closed.
-    pub(super) fn close_tasks(&mut self) {
-        self.tasks_ui.refresher = None;
-        self.tasks_ui.follow_title = None;
-    }
-
-    /// The board for what the window is on, and the reason when it is not the
-    /// project's.
-    fn task_board_now(&self) -> (Which, Option<&'static str>) {
-        let here = self.here();
-        let local = here.as_ref().is_none_or(|here| here.machine.is_local());
-        let root = here.as_ref().and_then(|here| match &here.project {
-            Some(id) => self
-                .snapshot
-                .project(id)
-                .map(|entry| entry.project.root.clone()),
-            None => self
-                .engine
-                .store()
-                .memory_root(&here.machine, &here.cwd)
-                .ok()
-                .flatten(),
-        });
-        task_board::choose(local, root, self.tasks_ui.want_global)
     }
 
     fn tasks_scope(&self) -> MemoryScope {
@@ -171,19 +422,22 @@ impl Shell {
     }
 
     /// The questions of the palette come back to the board.
-    pub(super) fn return_to_tasks(&mut self, cx: &mut Context<Self>) {
-        self.overlay = Overlay::Tasks;
-        self.open_tasks(cx);
+    pub(super) fn return_to_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tasks_open() {
+            self.pane = Pane::Main;
+            self.tasks_reload();
+            self.sync_focus(window, cx);
+        }
     }
 
     /// Creates a task with the answer of the palette: in the column the
     /// cursor is in while the board is open, else in the one of tasks to do.
     pub(super) fn new_task(&mut self, title: &str, cx: &mut Context<Self>) {
-        let open = self.overlay == Overlay::Tasks;
+        let open = self.tasks_open();
         let (which, status) = if open {
             (self.tasks_ui.which.clone(), self.tasks_ui.board.status())
         } else {
-            (self.task_board_now().0, TaskStatus::Todo)
+            (self.tasks_pick().0, TaskStatus::Todo)
         };
         let root = match which {
             Which::Project(root) => Some(root),
@@ -200,7 +454,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// A key while the board is up. `true` when it was the board's.
+    /// A key while the board is the main pane and has the keyboard. `true`
+    /// when it was the board's.
     pub(super) fn tasks_key(
         &mut self,
         stroke: &gpui_kit::Keystroke,
@@ -209,6 +464,17 @@ impl Shell {
     ) -> bool {
         let m = &stroke.modifiers;
         let other = m.platform || m.control || m.alt;
+        if stroke.key == "escape" && !other && !m.shift {
+            // The first Escape lets go of a drag, the next leaves the board.
+            if self.tasks_ui.drop.is_some() || self.tasks_ui.dragging.is_some() {
+                self.tasks_ui.drop = None;
+                self.tasks_ui.dragging = None;
+                cx.notify();
+            } else {
+                self.close_tasks(window, cx);
+            }
+            return true;
+        }
         let Some(action) = task_board::action_of(stroke.key.as_str(), m.shift, other) else {
             return false;
         };
@@ -222,179 +488,352 @@ impl Shell {
             | Action::CardDown
             | Action::Done => {
                 if let Some(plan) = self.tasks_ui.board.plan(action) {
-                    self.engine.submit(Op::MoveTask {
-                        id: plan.id,
-                        status: plan.status,
-                        before: plan.before,
-                    });
+                    self.tasks_move(plan);
                 }
             }
-            Action::Priority => {
-                if let Some(card) = self.tasks_ui.board.selected() {
-                    let patch = TaskPatch {
-                        priority: Some(task_board::next_priority(card.priority)),
-                        ..TaskPatch::default()
-                    };
-                    self.engine.submit(Op::UpdateTask {
-                        id: card.id.clone(),
-                        patch,
-                    });
-                }
+            Action::Priority => self.tasks_raise_priority(),
+            Action::New => self.tasks_ask_for_a_title(window, cx),
+            Action::Scope => {
+                let which = if self.tasks_ui.want_global {
+                    self.tasks_pick_project()
+                } else {
+                    Which::Global
+                };
+                self.tasks_show(which);
             }
-            Action::New => {
-                self.tasks_ui.return_from_palette = true;
-                self.begin_flow(Command::NewTask, window, cx);
-            }
-            Action::Scope => self.tasks_switch_board(),
         }
         cx.notify();
         true
     }
 
-    /// Switches between the project's board and the global one.
-    pub(super) fn tasks_switch_board(&mut self) {
-        self.tasks_ui.want_global = !self.tasks_ui.want_global;
-        let (which, note) = self.task_board_now();
-        self.tasks_ui.which = which;
-        self.tasks_ui.note = note;
-        self.tasks_reload();
+    /// The project's board to go back to from the global one.
+    fn tasks_pick_project(&self) -> Which {
+        self.board_projects()
+            .first()
+            .map(|(_, _, root)| Which::Project(root.clone()))
+            .unwrap_or(Which::Global)
     }
 
-    pub(super) fn render_tasks(&self, colours: &Palette, cx: &mut Context<Self>) -> Stateful<Div> {
-        let ui = &self.tasks_ui;
-        let (cursor_column, cursor_row) = ui.board.cursor();
-        let title = match &ui.which {
-            Which::Project(root) => std::path::Path::new(root)
-                .file_name()
-                .map_or_else(|| root.clone(), |name| name.to_string_lossy().into_owned()),
+    fn tasks_move(&mut self, plan: task_board::Plan) {
+        self.tasks_ui.board.follow(plan.id.clone());
+        self.engine.submit(Op::MoveTask {
+            id: plan.id,
+            status: plan.status,
+            before: plan.before,
+        });
+    }
+
+    fn tasks_raise_priority(&mut self) {
+        let Some(card) = self.tasks_ui.board.selected() else {
+            return;
+        };
+        let patch = TaskPatch {
+            priority: Some(task_board::next_priority(card.priority)),
+            ..TaskPatch::default()
+        };
+        let id = card.id.clone();
+        self.engine.submit(Op::UpdateTask { id, patch });
+    }
+
+    fn tasks_ask_for_a_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.tasks_ui.return_from_palette = true;
+        self.begin_flow(Command::NewTask, window, cx);
+    }
+
+    /// Notes a drag passing over a place of the board: what releasing the
+    /// pointer now would do. `true` when anything changed.
+    fn note_card_drag_over(&mut self, id: &str, column: usize, index: usize) -> bool {
+        let at = DropAt {
+            id: id.to_owned(),
+            column,
+            index,
+        };
+        let mut changed = self.tasks_ui.dragging.as_deref() != Some(id);
+        self.tasks_ui.dragging = Some(id.to_owned());
+        if self.tasks_ui.drop.as_ref() != Some(&at) {
+            self.tasks_ui.drop = Some(at);
+            changed = true;
+        }
+        changed
+    }
+
+    /// Forgets where a drag would land: the pointer left the columns.
+    pub(super) fn forget_card_drop(&mut self) -> bool {
+        let had = self.tasks_ui.drop.is_some() || self.tasks_ui.dragging.is_some();
+        self.tasks_ui.drop = None;
+        self.tasks_ui.dragging = None;
+        had
+    }
+
+    /// The release of a drag: carries the card where the moves saw it last.
+    pub(super) fn finish_card_drop(&mut self) {
+        let drop = self.tasks_ui.drop.take();
+        self.tasks_ui.dragging = None;
+        let Some(drop) = drop else {
+            return;
+        };
+        if let Some(plan) = self
+            .tasks_ui
+            .board
+            .drop_plan(&drop.id, drop.column, drop.index)
+        {
+            self.tasks_move(plan);
+        }
+    }
+
+    /// The header line of the main pane while the board is shown.
+    pub(super) fn tasks_heading(&self) -> (&'static str, String, String) {
+        let name = match &self.tasks_ui.which {
+            Which::Project(root) => self
+                .local_project(root)
+                .and_then(|(id, _)| self.snapshot.project(&id))
+                .map(|entry| self.project_label(&entry.project))
+                .unwrap_or_else(|| root.clone()),
             Which::Global => "Global board".to_owned(),
         };
-        let switch_label = if matches!(ui.which, Which::Global) && !ui.want_global {
-            None
-        } else if ui.want_global {
-            Some("Project board  g")
+        let board = &self.tasks_ui.board;
+        (
+            "Tasks",
+            name,
+            format!("{} open · {} cards", board.open(), board.len()),
+        )
+    }
+
+    /// The board, as the main pane's body.
+    pub(super) fn render_tasks(&self, c: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let ui = &self.tasks_ui;
+        let board = &ui.board;
+        let mut root = div()
+            .debug_selector(|| "tasks".into())
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(self.tasks_header(c, cx));
+        root = if board.is_empty() && ui.error.is_none() {
+            root.child(self.tasks_empty(c, cx))
         } else {
-            Some("Global board  g")
+            root.child(self.tasks_lanes(c, cx))
         };
-        let mut header = div()
+        root = root.child(self.tasks_detail(c, cx));
+        root.child(self.tasks_footer(c)).into_any_element()
+    }
+
+    fn tasks_header(&self, c: &Palette, cx: &mut Context<Self>) -> Div {
+        let ui = &self.tasks_ui;
+        let board = &ui.board;
+        let total = board.len();
+        let done = total - board.open();
+        let share = if total == 0 {
+            0.0
+        } else {
+            done as f32 / total as f32
+        };
+        let mut chips = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(6.))
+            .overflow_hidden();
+        let chip = |id: SharedString, label: String, on: bool| {
+            mono(label)
+                .id(id.clone())
+                .debug_selector(move || id.to_string())
+                .flex_none()
+                .px(px(8.))
+                .py(px(3.))
+                .rounded(metrics::RADIUS())
+                .border_1()
+                .border_color(if on { c.signal } else { c.elevated_border })
+                .bg(if on { c.surface_2 } else { c.surface })
+                .text_color(if on { c.text } else { c.text_muted })
+                .cursor_pointer()
+        };
+        for (index, (_, name, root)) in self.board_projects().into_iter().enumerate() {
+            let on = ui.which == Which::Project(root.clone());
+            let target = Which::Project(root);
+            chips = chips.child(
+                chip(format!("tasks-project-{index}").into(), name, on).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.tasks_show(target.clone());
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        chips = chips.child(
+            chip(
+                "tasks-global".into(),
+                "Global".to_owned(),
+                ui.which == Which::Global,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.tasks_show(Which::Global);
+                cx.notify();
+            })),
+        );
+        let (_, title, _) = self.tasks_heading();
+        div()
             .flex_none()
-            .h(metrics::HEADER_HEIGHT())
             .px_4()
+            .py(px(10.))
             .border_b_1()
-            .border_color(colours.border)
+            .border_color(c.border)
             .flex()
             .items_center()
             .gap_3()
-            .child(section_label("Tasks", colours))
+            .child(mark(px(30.), c, cx, Lion::new("tasks-lion").hover()))
             .child(
                 div()
-                    .debug_selector(|| "tasks-title".into())
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(colours.text_muted)
-                    .child(format!("{title} · {} tasks", ui.board.len())),
-            );
-        if let Some(label) = switch_label {
-            header = header.child(pill("tasks-switch", label, colours).on_click(cx.listener(
-                |this, _, _, cx| {
-                    this.tasks_switch_board();
-                    cx.notify();
-                },
-            )));
-        }
-        header = header.child(
-            pill("tasks-new", "New task  n", colours).on_click(cx.listener(
-                |this, _, window, cx| {
-                    this.tasks_ui.return_from_palette = true;
-                    this.begin_flow(Command::NewTask, window, cx);
-                },
-            )),
-        );
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .debug_selector(|| "tasks-title".into())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(metrics::TEXT_BODY())
+                            .text_color(c.text)
+                            .child(title),
+                    )
+                    .child(
+                        mono(format!(
+                            "{} OPEN · {} DONE · {} TOTAL",
+                            board.open(),
+                            done,
+                            total
+                        ))
+                        .debug_selector(|| "tasks-counts".into())
+                        .text_size(metrics::TEXT_SMALL())
+                        .text_color(c.text_faint),
+                    ),
+            )
+            .child(
+                // How much of the board is done.
+                div()
+                    .debug_selector(|| "tasks-progress".into())
+                    .flex_none()
+                    .w(px(96.))
+                    .h(px(4.))
+                    .rounded(px(2.))
+                    .bg(c.border)
+                    .child(
+                        div()
+                            .h_full()
+                            .w(px(96. * share))
+                            .rounded(px(2.))
+                            .bg(c.success),
+                    ),
+            )
+            .child(chips)
+            .child(
+                super::updates_view::pill("tasks-new", "New task  n", c).on_click(
+                    cx.listener(|this, _, window, cx| this.tasks_ask_for_a_title(window, cx)),
+                ),
+            )
+    }
 
-        let hover = colours.surface_2;
-        let mut columns = div()
+    fn tasks_lanes(&self, c: &Palette, cx: &mut Context<Self>) -> Stateful<Div> {
+        let ui = &self.tasks_ui;
+        let (cursor_column, cursor_row) = ui.board.cursor();
+        let drop = ui.drop.clone();
+        let mut lanes = div()
             .id("tasks-columns")
             .debug_selector(|| "tasks-columns".into())
             .flex_1()
             .min_h_0()
             .flex()
-            .gap_2()
-            .p_3();
+            .gap(px(10.))
+            .p_3()
+            // The pointer left every column: a release drops nothing.
+            .on_drag_move(cx.listener(|this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                if !event.bounds.contains(&event.event.position) && this.forget_card_drop() {
+                    cx.notify();
+                }
+            }));
         for (index, status) in COLUMNS.into_iter().enumerate() {
             let cards = &ui.board.columns()[index];
-            let here = index == cursor_column;
+            let accent = status_colour(status, c);
+            let here = drop.as_ref().is_some_and(|d| d.column == index);
+            let focused = index == cursor_column;
             let mut list = div()
                 .id(("tasks-cards", index))
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .px(px(8.))
+                .pb(px(8.))
                 .flex()
                 .flex_col()
-                .gap(px(6.));
+                .gap(px(8.));
             for (row, task) in cards.iter().enumerate() {
-                let on = here && row == cursor_row;
-                let mut meta: Vec<String> = vec![task.short_id().to_owned()];
-                if task.priority != leon_core::TaskPriority::None {
-                    meta.push(task.priority.as_str().to_owned());
-                }
-                if let Some(assignee) = &task.assignee {
-                    meta.push(format!("@{assignee}"));
-                }
-                meta.extend(task.labels.iter().map(|label| format!("#{label}")));
-                list = list.child(
-                    div()
-                        .id(("tasks-card", index * 10_000 + row))
-                        .debug_selector(move || format!("tasks-card-{index}-{row}"))
-                        .flex_none()
-                        .px(px(8.))
-                        .py(px(6.))
-                        .rounded(metrics::RADIUS())
-                        .border_1()
-                        .border_color(if on {
-                            colours.signal
-                        } else {
-                            colours.elevated_border
-                        })
-                        .bg(if on {
-                            colours.surface_2
-                        } else {
-                            colours.surface
-                        })
-                        .cursor_pointer()
-                        .hover(move |style| style.bg(hover))
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.tasks_ui.board.select(index, row);
-                            cx.notify();
-                        }))
-                        .child(
+                let selected = focused && row == cursor_row;
+                let line = drop
+                    .as_ref()
+                    .is_some_and(|d| d.column == index && d.index == row);
+                let ghosted = ui.dragging.as_deref() == Some(task.id.as_str());
+                list = list.child(self.task_card(task, index, row, selected, line, ghosted, c, cx));
+            }
+            // The room under the last card: a drop here is the end of the
+            // column, and in an empty column the whole of it.
+            let at_end = drop
+                .as_ref()
+                .is_some_and(|d| d.column == index && d.index >= cards.len());
+            let empty = cards.is_empty();
+            let id_for_tail = index;
+            list = list.child(
+                div()
+                    .id(("tasks-tail", index))
+                    .debug_selector(move || format!("tasks-tail-{id_for_tail}"))
+                    .relative()
+                    .flex_1()
+                    .min_h(px(if empty { 96. } else { 36. }))
+                    .when(empty, |this| {
+                        this.rounded(metrics::RADIUS())
+                            .border_1()
+                            .border_dashed()
+                            .border_color(if here { c.signal } else { c.border })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .debug_selector(move || format!("tasks-empty-{id_for_tail}"))
+                                    .text_size(metrics::TEXT_SMALL())
+                                    .text_color(c.text_faint)
+                                    .child(if here { "Drop here" } else { "Nothing here" }),
+                            )
+                    })
+                    .when(at_end && !empty, |this| {
+                        this.child(
                             div()
-                                .text_size(metrics::TEXT_BODY())
-                                .text_color(colours.text)
-                                .child(task.title.clone()),
+                                .absolute()
+                                .top(px(-5.))
+                                .left_0()
+                                .right_0()
+                                .h(px(2.))
+                                .rounded(px(1.))
+                                .bg(c.signal),
                         )
-                        .child(
-                            div()
-                                .text_size(metrics::TEXT_SMALL())
-                                .text_color(colours.text_muted)
-                                .child(meta.join("  ")),
-                        ),
-                );
-            }
-            if cards.is_empty() {
-                list = list.child(
-                    div()
-                        .debug_selector(move || format!("tasks-empty-{index}"))
-                        .px(px(8.))
-                        .text_size(metrics::TEXT_SMALL())
-                        .text_color(colours.text_faint)
-                        .child("Nothing here"),
-                );
-            }
-            columns = columns.child(
+                    })
+                    .on_drag_move(cx.listener(
+                        move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                            if !event.bounds.contains(&event.event.position) {
+                                return;
+                            }
+                            let id = event.drag(cx).id.clone();
+                            let end = this.tasks_ui.board.columns()[index].len();
+                            if this.note_card_drag_over(&id, index, end) {
+                                cx.notify();
+                            }
+                        },
+                    )),
+            );
+            let count = cards.len();
+            lanes = lanes.child(
                 div()
                     .id(("tasks-column", index))
                     .debug_selector(move || format!("tasks-column-{index}"))
@@ -403,71 +842,336 @@ impl Shell {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .rounded(metrics::RADIUS())
+                    .border_1()
+                    .border_color(if here {
+                        c.signal
+                    } else if focused {
+                        c.elevated_border
+                    } else {
+                        c.border
+                    })
+                    .bg(c
+                        .surface
+                        .blend(accent.opacity(if here { 0.14 } else { 0.05 })))
                     .child(
-                        mono(format!(
-                            "{} {}",
-                            status.as_str().to_uppercase(),
-                            cards.len()
-                        ))
-                        .flex_none()
-                        .px(px(4.))
-                        .pb(px(4.))
-                        .border_b_1()
-                        .border_color(if here { colours.signal } else { colours.border })
-                        .text_color(if here {
-                            colours.text
-                        } else {
-                            colours.text_muted
-                        }),
+                        div()
+                            .flex_none()
+                            .px(px(10.))
+                            .py(px(8.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().flex_none().size(px(8.)).bg(accent))
+                            .child(mono(status.as_str().to_uppercase()).text_color(if focused {
+                                c.text
+                            } else {
+                                c.text_muted
+                            }))
+                            .child(
+                                mono(count.to_string())
+                                    .debug_selector(move || format!("tasks-count-{index}"))
+                                    .text_color(c.text_faint),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .id(("tasks-add", index))
+                                    .debug_selector(move || format!("tasks-add-{index}"))
+                                    .flex_none()
+                                    .size(px(20.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(metrics::RADIUS())
+                                    .cursor_pointer()
+                                    .hover(move |style| style.bg(c.surface_2))
+                                    .child(icon(IconName::Plus, px(12.), c.text_muted))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.tasks_ui.board.select(index, usize::MAX);
+                                        this.tasks_ask_for_a_title(window, cx);
+                                    })),
+                            ),
                     )
                     .child(list),
             );
         }
+        lanes
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn task_card(
+        &self,
+        task: &Card,
+        column: usize,
+        row: usize,
+        selected: bool,
+        line: bool,
+        ghosted: bool,
+        c: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let c = *c;
+        let stripe = priority_colour(task.priority, &c);
+        let id = task.id.clone();
+        let title = task.title.clone();
+        let meta = meta_of(task);
+        let ghost = (title.clone(), meta.clone());
+        let agent = task
+            .assignee
+            .as_deref()
+            .or(task.agent.as_deref())
+            .and_then(leon_core::AgentId::parse);
+        let mut footer = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(metrics::TEXT_SMALL())
+            .text_color(c.text_muted);
+        if let Some(agent) = agent {
+            footer = footer.child(agent_icon(agent, px(12.), &c));
+        }
+        footer = footer.child(mono(meta));
+        let mut labels = div().flex().flex_wrap().gap(px(4.));
+        for label in &task.labels {
+            labels = labels.child(
+                mono(label.clone())
+                    .px(px(5.))
+                    .py(px(1.))
+                    .rounded(metrics::RADIUS())
+                    .bg(c.surface_2)
+                    .text_size(metrics::TEXT_SMALL())
+                    .text_color(c.text_muted),
+            );
+        }
+        let hover = c.surface_2;
+        div()
+            .id(("tasks-card", column * 10_000 + row))
+            .debug_selector(move || format!("tasks-card-{column}-{row}"))
+            .relative()
+            .flex_none()
+            .flex()
+            .rounded(metrics::RADIUS())
+            .border_1()
+            .border_color(if selected {
+                c.signal
+            } else {
+                c.elevated_border
+            })
+            .bg(if selected { c.surface_2 } else { c.surface })
+            .overflow_hidden()
+            .cursor_pointer()
+            .when(ghosted, |this| this.opacity(0.35))
+            .hover(move |style| style.bg(hover))
+            .child(div().flex_none().w(px(3.)).bg(stripe.unwrap_or(c.border)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(5.))
+                    .child(
+                        div()
+                            .text_size(metrics::TEXT_BODY())
+                            .text_color(c.text)
+                            .child(title),
+                    )
+                    .when(!task.labels.is_empty(), |this| this.child(labels))
+                    .child(footer),
+            )
+            .when(line, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(-5.))
+                        .left_0()
+                        .right_0()
+                        .h(px(2.))
+                        .rounded(px(1.))
+                        .bg(c.signal),
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.tasks_ui.board.select(column, row);
+                cx.notify();
+            }))
+            .on_drag(CardDrag { id: id.clone() }, move |_, _, _, cx| {
+                cx.new(|_| CardGhost {
+                    title: ghost.0.clone(),
+                    meta: ghost.1.clone(),
+                    stripe,
+                    palette: c,
+                })
+            })
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                    // Every card hears every move of the drag: only the one
+                    // under the pointer answers, above or below its middle.
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let dragged = event.drag(cx).id.clone();
+                    let after = event.event.position.y > event.bounds.center().y;
+                    let index = row + usize::from(after);
+                    if this.note_card_drag_over(&dragged, column, index) {
+                        cx.notify();
+                    }
+                }),
+            )
+    }
+
+    /// The empty board: the lion and what to do.
+    fn tasks_empty(&self, c: &Palette, cx: &mut Context<Self>) -> Div {
+        div()
+            .debug_selector(|| "tasks-hint".into())
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(14.))
+            .child(mark(px(96.), c, cx, Lion::new("tasks-empty-lion").hover()))
+            .child(
+                div()
+                    .text_size(metrics::TEXT_BODY())
+                    .text_color(c.text)
+                    .child("Nothing on this board yet"),
+            )
+            .child(
+                div()
+                    .text_size(metrics::TEXT_SMALL())
+                    .text_color(c.text_muted)
+                    .child(
+                        "Press n to add a task. Agents add theirs from their terminal or \
+                         through the task tools.",
+                    ),
+            )
+    }
+
+    /// The card under the cursor, in full, with what can be done to it.
+    fn tasks_detail(&self, c: &Palette, cx: &mut Context<Self>) -> Div {
+        let Some(task) = self.tasks_ui.board.selected() else {
+            return div();
+        };
+        let accent = status_colour(task.status, c);
+        let body: String = task.body.chars().take(320).collect();
+        let action =
+            |id: &'static str, label: &str| super::updates_view::pill(id, label.to_owned(), c);
+        let mut strip = div()
+            .debug_selector(|| "tasks-detail".into())
+            .flex_none()
+            .px_4()
+            .py(px(10.))
+            .border_t_1()
+            .border_color(c.border)
+            .flex()
+            .items_start()
+            .gap_4()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(div().flex_none().size(px(8.)).bg(accent))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(c.text)
+                                    .child(task.title.clone()),
+                            )
+                            .child(
+                                mono(format!(
+                                    "{} · {}",
+                                    task.status.as_str().to_uppercase(),
+                                    task.short_id()
+                                ))
+                                .text_size(metrics::TEXT_SMALL())
+                                .text_color(c.text_faint),
+                            ),
+                    )
+                    .when(!body.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .text_size(metrics::TEXT_SMALL())
+                                .text_color(c.text_muted)
+                                .child(body),
+                        )
+                    }),
+            );
+        let mut buttons = div().flex_none().flex().items_center().gap(px(6.));
+        if task.status != TaskStatus::Done {
+            buttons = buttons.child(action("tasks-done", "Done  d").on_click(cx.listener(
+                |this, _, _, cx| {
+                    if let Some(plan) = this.tasks_ui.board.plan(Action::Done) {
+                        this.tasks_move(plan);
+                    }
+                    cx.notify();
+                },
+            )));
+        }
+        buttons = buttons.child(
+            action("tasks-priority", "Priority  p").on_click(cx.listener(|this, _, _, cx| {
+                this.tasks_raise_priority();
+                cx.notify();
+            })),
+        );
+        strip = strip.child(buttons);
+        strip
+    }
+
+    fn tasks_footer(&self, c: &Palette) -> Div {
+        let ui = &self.tasks_ui;
         let mut footer = div()
             .flex_none()
             .px_4()
-            .py(px(8.))
+            .py(px(7.))
             .border_t_1()
-            .border_color(colours.border)
-            .text_size(metrics::TEXT_SMALL())
-            .text_color(colours.text_muted)
+            .border_color(c.border)
             .flex()
-            .flex_col()
-            .gap(px(2.));
+            .flex_wrap()
+            .items_center()
+            .gap_x(px(12.))
+            .gap_y(px(4.))
+            .text_size(metrics::TEXT_SMALL())
+            .text_color(c.text_muted);
         if let Some(error) = &ui.error {
             footer = footer.child(
                 div()
                     .debug_selector(|| "tasks-error".into())
-                    .text_color(colours.text)
+                    .text_color(c.text)
                     .child(format!("Could not read the board: {error}")),
-            );
-        }
-        if ui.board.is_empty() && ui.error.is_none() {
-            footer = footer.child(
-                div()
-                    .debug_selector(|| "tasks-hint".into())
-                    .child("No tasks yet. Press n to add one; agents add theirs from their terminal or MCP tools."),
             );
         }
         if let Some(note) = ui.note {
             footer = footer.child(div().debug_selector(|| "tasks-note".into()).child(note));
         }
-        footer = footer.child(div().child(
-            "Arrows or h j k l move · Shift with them carries the card · n new · \
-                 d done · p priority · g global board · Esc closes",
-        ));
-
-        self.card("tasks", colours)
-            .w(self.viewport.width - px(64.))
-            .max_w(px(1500.))
-            .h(self.viewport.height - px(96.))
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .child(header)
-            .child(columns)
-            .child(footer)
+        let hint = |keys: &str, what: &str| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .child(key_cap(keys.to_owned(), c))
+                .child(what.to_owned())
+        };
+        footer
+            .child(hint("← → ↑ ↓", "move"))
+            .child(hint("⇧", "carry the card"))
+            .child(hint("drag", "move it anywhere"))
+            .child(hint("n", "new"))
+            .child(hint("d", "done"))
+            .child(hint("p", "priority"))
+            .child(hint("g", "global board"))
+            .child(hint("esc", "back"))
     }
 }

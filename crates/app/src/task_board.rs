@@ -239,6 +239,47 @@ impl Board {
         }
     }
 
+    /// The column and the place of the card `id`, when it is on the board.
+    pub fn find(&self, id: &str) -> Option<(usize, usize)> {
+        self.columns.iter().enumerate().find_map(|(column, cards)| {
+            cards
+                .iter()
+                .position(|task| task.id == id)
+                .map(|row| (column, row))
+        })
+    }
+
+    /// What a card dropped in `column`, before the card at `index` of that
+    /// column as it is drawn (the dragged card still in it, `index` equal to
+    /// the number of cards for the end), asks of the engine. `None` when the
+    /// drop leaves the card where it is, or when the card is not on the board.
+    pub fn drop_plan(&self, id: &str, column: usize, index: usize) -> Option<Plan> {
+        let column = column.min(COLUMNS.len() - 1);
+        let (from_column, from_row) = self.find(id)?;
+        let mut cards: Vec<&Task> = self.columns[column].iter().collect();
+        let mut index = index.min(cards.len());
+        if from_column == column {
+            // Counted without the card: its own place is not one to drop at.
+            cards.remove(from_row);
+            if index > from_row {
+                index -= 1;
+            }
+            if index == from_row {
+                return None;
+            }
+        }
+        Some(Plan {
+            id: id.to_owned(),
+            status: COLUMNS[column],
+            before: cards.get(index).map(|task| task.id.clone()),
+        })
+    }
+
+    /// How many open cards (everything but done) the board holds.
+    pub fn open(&self) -> usize {
+        self.columns[..COLUMNS.len() - 1].iter().map(Vec::len).sum()
+    }
+
     /// Puts the cursor on a card the person pointed at (a click). A place
     /// outside the board is brought inside it.
     pub fn select(&mut self, column: usize, row: usize) {
@@ -496,6 +537,57 @@ mod tests {
             task("new", TaskStatus::Doing),
         ]);
         assert_eq!(id(&board), "new");
+    }
+
+    #[test]
+    fn a_drop_names_the_card_it_goes_above_and_none_where_nothing_changes() {
+        use TaskStatus::*;
+        let mut board = Board::new();
+        board.set_tasks(vec![
+            task("a", Todo),
+            task("b", Todo),
+            task("c", Todo),
+            task("d", Doing),
+        ]);
+        let plan = |id: &str, column: usize, index: usize| board.drop_plan(id, column, index);
+        let to = |id: &str, status: TaskStatus, before: Option<&str>| {
+            Some(Plan {
+                id: id.into(),
+                status,
+                before: before.map(str::to_owned),
+            })
+        };
+        // Another column: above the card at the index, or the bottom.
+        assert_eq!(plan("a", 2, 0), to("a", Doing, Some("d")));
+        assert_eq!(plan("a", 2, 1), to("a", Doing, None));
+        assert_eq!(plan("a", 2, 99), to("a", Doing, None));
+        // Into an empty column.
+        assert_eq!(plan("a", 3, 0), to("a", Review, None));
+        // The same column, counted with the card still in it.
+        assert_eq!(plan("a", 1, 3), to("a", Todo, None));
+        assert_eq!(plan("a", 1, 2), to("a", Todo, Some("c")));
+        assert_eq!(plan("c", 1, 0), to("c", Todo, Some("a")));
+        assert_eq!(plan("c", 1, 1), to("c", Todo, Some("b")));
+        assert_eq!(plan("b", 1, 3), to("b", Todo, None));
+        // Where it already is: before itself, after itself, at the bottom.
+        assert_eq!(plan("a", 1, 0), None);
+        assert_eq!(plan("a", 1, 1), None);
+        assert_eq!(plan("b", 1, 1), None);
+        assert_eq!(plan("b", 1, 2), None);
+        assert_eq!(plan("c", 1, 2), None);
+        assert_eq!(plan("c", 1, 3), None);
+        // A card that is not on the board.
+        assert_eq!(plan("zzz", 1, 0), None);
+    }
+
+    #[test]
+    fn the_board_counts_what_is_open() {
+        let board = board();
+        // backlog 1, todo 3, doing 1 and review 0 are open; done 1 is not.
+        assert_eq!(board.open(), 5);
+        assert_eq!(board.find("d1"), Some((2, 0)));
+        assert_eq!(board.find("n1"), Some((4, 0)));
+        assert_eq!(board.find("x1"), None);
     }
 
     #[test]

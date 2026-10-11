@@ -140,6 +140,8 @@ pub struct Options {
     pub theme_name: Option<ThemeId>,
     /// Open on the Den.
     pub den: bool,
+    /// Open on the board of tasks.
+    pub tasks: bool,
 }
 
 /// The text printed by `--help`.
@@ -152,6 +154,7 @@ pub fn usage() -> String {
          --theme <light|dark|system>    Use this appearance for this run\n  \
          --theme-name <id>              Use this theme for this run: {names}, or a user theme's id\n  \
          --den                          Open on The Den\n  \
+         --tasks                        Open on the board of tasks\n  \
          -h, --help                     Print this help\n  \
          -V, --version                  Print the version",
         name = product::PRODUCT_NAME,
@@ -229,6 +232,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             "--den" => options.den = true,
+            "--tasks" => options.tasks = true,
             "--data-dir" => {
                 let path = value("a path")?;
                 if path.is_empty() {
@@ -563,6 +567,7 @@ mod tests {
             theme: None,
             theme_name: None,
             den: false,
+            tasks: false,
         }));
         assert_eq!(parsed(&["--data-dir", "/tmp/leon"]), expected);
         assert_eq!(parsed(&["--data-dir=/tmp/leon"]), expected);
@@ -581,6 +586,18 @@ mod tests {
     }
 
     #[test]
+    fn the_board_of_tasks_can_be_asked_for_at_the_start() {
+        assert_eq!(
+            parsed(&["--tasks"]),
+            Ok(Command::Run(Options {
+                tasks: true,
+                ..Options::default()
+            }))
+        );
+        assert!(usage().contains("--tasks"));
+    }
+
+    #[test]
     fn the_theme_is_read_in_any_case() {
         assert_eq!(
             parsed(&["--theme", "Light"]),
@@ -589,6 +606,7 @@ mod tests {
                 theme: Some(AppearanceChoice::Light),
                 theme_name: None,
                 den: false,
+                tasks: false,
             }))
         );
     }
@@ -602,6 +620,7 @@ mod tests {
                 theme: Some(AppearanceChoice::Dark),
                 theme_name: None,
                 den: false,
+                tasks: false,
             }))
         );
     }
@@ -615,6 +634,7 @@ mod tests {
                 theme: Some(AppearanceChoice::Light),
                 theme_name: Some(ThemeId::Leon),
                 den: false,
+                tasks: false,
             }))
         );
         assert_eq!(
