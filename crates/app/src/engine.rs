@@ -3135,7 +3135,7 @@ impl Engine {
             .store
             .update_task(id, &patch, crate::memory::now_millis())?;
         let mut line = format!(
-            "Started work on {} in {branch}: {}",
+            "Created worktree {branch} for {}: {}",
             task.short_id(),
             task.title
         );
@@ -6175,7 +6175,7 @@ branch refs/heads/feature/login
             })
             .await;
         let line = status(&rig.engine).text;
-        assert!(line.starts_with("Started work on "), "{line}");
+        assert!(line.starts_with("Created worktree "), "{line}");
         assert!(line.ends_with("No setup was run."), "{line}");
         let task = rig.store.task(&task.id).unwrap();
         assert_eq!(task.status, leon_core::TaskStatus::Doing);

@@ -28,16 +28,19 @@
 * The details of a card (a click on it, or `e`): a drawer over
   the right edge of the board (it moves nothing) to read and edit what a card cannot show: the title, a
   description of several lines, who it is for, status and priority, labels and
-  where its worktree is, with every action in view (start work, mark done,
-  cancel, delete). Text is saved when you close it or choose another card;
+  where its worktree is, with every action in view (create the worktree,
+  mark done, cancel, delete). Text is saved when you close it or choose another card;
   while a field has the keyboard, the board's keys are typed and not run.
-* **Start work on a task** (`w`, Enter, or the button of the card's strip):
-  makes a worktree named after the task, starts the agent you pick in it with
-  the task as its prompt, and moves the card to doing with the branch on it;
-  **Only a worktree** opens a shell in it instead. The card is written only
-  once the worktree exists, a card that has a worktree opens it, and the
-  agent is told how to move the card to review. `leon task edit --branch`
-  and the MCP `task_update` read and write the branch.
+* **Create the worktree of a task** (`w`, Enter, or **Create worktree** in the
+  card's details): makes a worktree named after the task, starts the agent you
+  pick in it with the task as its prompt, and moves the card to doing, linked
+  to it; **Only a worktree** opens a shell in it instead. The card shows the
+  branch and whether it is **active** (working, waiting for you, asks you,
+  failed, at the prompt or no session), the details add the folder and **Open
+  worktree** / **Open session**, and a card whose worktree was removed says so
+  and can make it again. The card is written only once the worktree exists,
+  and the agent is told how to move it to review. `leon task edit --branch` and
+  the MCP `task_update` read and write the branch.
 
 ### Fixed
 

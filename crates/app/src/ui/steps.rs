@@ -2606,7 +2606,7 @@ const START: &str = "--start";
 
 /// The agents that can be given a prompt where `info`'s project is: on, with a
 /// verified prompt form, and installed there (or not known to be missing).
-/// "Start work on the task": which agent codes it, or none for a worktree
+/// "Create worktree for the task": which agent codes it, or none for a worktree
 /// with only a shell in it. The worktree is on this computer, where the board
 /// is, so the agents offered are the ones installed here that take a prompt.
 fn start_task(answers: &[String], world: &World) -> Outcome {
@@ -2632,7 +2632,7 @@ fn start_task(answers: &[String], world: &World) -> Outcome {
                 "a shell in a new worktree, no agent",
                 NO_AGENT,
             ));
-            choices("Start work with", list, Custom::No)
+            choices("Create the worktree with", list, Custom::No)
         }
         [pick, ..] if pick == NO_AGENT => Outcome::Run(Action::StartTask(None)),
         [pick, ..] => match AgentId::parse(pick).filter(|agent| candidates.contains(agent)) {
@@ -2642,7 +2642,7 @@ fn start_task(answers: &[String], world: &World) -> Outcome {
     }
 }
 
-/// The answer of "Start work with" that means no agent.
+/// The answer of "Create the worktree with" that means no agent.
 const NO_AGENT: &str = "-";
 
 fn prompt_candidates(world: &World, machine: &MachineId) -> Vec<AgentId> {

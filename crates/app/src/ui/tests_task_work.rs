@@ -118,7 +118,7 @@ fn a_task_gets_a_worktree_and_an_agent_and_moves_to_doing(cx: &mut TestAppContex
     let task = h.store.task(&id).unwrap();
     assert_eq!(task.branch.as_deref(), Some(branch.as_str()));
     assert_eq!(task.assignee.as_deref(), Some("claude"));
-    assert!(h.status().contains("Started work on"), "{}", h.status());
+    assert!(h.status().contains("Created worktree"), "{}", h.status());
 }
 
 #[gpui_kit::test]
@@ -219,4 +219,116 @@ fn the_global_board_cannot_start_work_and_says_why(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(1));
     h.settle(cx);
     assert!(h.status().contains("no project"), "{}", h.status());
+}
+
+// ----- the link between a task and its worktree ----------------------------------------------
+
+#[gpui_kit::test]
+fn a_task_with_a_worktree_shows_it_and_that_it_is_active(cx: &mut TestAppContext) {
+    use crate::ui::activity::Activity;
+    use crate::ui::task_detail::Work;
+    let h = open_live(cx);
+    let (_dir, path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let (id, short) = board_with_a_task(&h, "Fix the login", "", cx);
+    let branch = format!("fix-the-login-{short}");
+    std::fs::create_dir_all(worktree_path(&path, &branch)).unwrap();
+    h.runner.queue(Output::ok("trunk"));
+    h.runner.queue(Output::ok(String::new()));
+    for _ in 0..6 {
+        h.runner.queue(Output::ok(listing(&path, &[&branch])));
+    }
+    h.press("w", cx);
+    h.type_text("claude", cx);
+    h.press("enter", cx);
+    wait_until(&h, cx, "the agent in its worktree", |h, cx| {
+        screen(h, cx, 1).contains("FAKE-CLAUDE")
+    });
+    wait_until(&h, cx, "the card to be linked", |h, _| {
+        h.store.task(&id).unwrap().branch.is_some()
+    });
+
+    // The board again: the card says where its work is and that it is active.
+    h.press_chord("cmd-shift-i", "ctrl-shift-alt-i", cx);
+    assert_eq!(h.main_kind(cx), "tasks");
+    cx.executor().advance_clock(REFRESH * 2);
+    h.settle(cx);
+    let card = h.store.task(&id).unwrap();
+    let work = h.shell(cx, |s| s.work_of(&card));
+    match work {
+        Work::Here {
+            branch: linked,
+            activity,
+            sessions,
+            ..
+        } => {
+            assert_eq!(linked, branch);
+            assert_ne!(activity, Activity::Off, "a session runs in it");
+            assert_eq!(sessions, 1);
+        }
+        other => panic!("its worktree was expected: {other:?}"),
+    }
+    // It is in the doing column, with the work row on the card.
+    assert!(h.shows_dynamic("tasks-branch-2-0".to_owned(), cx));
+    assert!(h.shows_dynamic("tasks-work-2-0".to_owned(), cx));
+
+    // The details say it too, with the actions of a worktree that exists.
+    h.press("e", cx);
+    assert!(h.shows("task-work-here", cx));
+    assert!(h.shows("task-work-state", cx));
+    assert!(h.shows("task-action-session", cx));
+    assert!(h.shows("task-action-start", cx));
+}
+
+#[gpui_kit::test]
+fn open_session_goes_to_the_terminal_of_the_worktree(cx: &mut TestAppContext) {
+    let h = open_live(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let (id, _short) = board_with_a_task(&h, "Already started", "", cx);
+    // The worktree the project has, with a shell open in it.
+    let patch = leon_core::TaskPatch {
+        branch: Some(Some("trunk".to_owned())),
+        ..leon_core::TaskPatch::default()
+    };
+    h.store.update_task(&id, &patch, 2).unwrap();
+    h.press("ctrl-shift-t", cx);
+    wait_until(&h, cx, "a shell", |h, cx| {
+        screen(h, cx, 1).contains("FAKE-SHELL")
+    });
+    h.press_chord("cmd-shift-i", "ctrl-shift-alt-i", cx);
+    cx.executor().advance_clock(REFRESH * 2);
+    h.settle(cx);
+    h.press("e", cx);
+    assert!(h.shows("task-action-session", cx));
+    h.mouse_on(
+        "task-action-session".to_owned(),
+        gpui_kit::MouseButton::Left,
+        cx,
+    );
+    assert_ne!(h.main_kind(cx), "tasks");
+}
+
+#[gpui_kit::test]
+fn a_branch_without_a_worktree_says_it_is_gone_and_offers_to_create_it_again(
+    cx: &mut TestAppContext,
+) {
+    use crate::ui::task_detail::Work;
+    let h = open_live(cx);
+    let (_dir, _path) = real_worktree_in(&h, cx, tempfile::tempdir().unwrap());
+    let (id, _short) = board_with_a_task(&h, "Was started", "", cx);
+    let patch = leon_core::TaskPatch {
+        branch: Some(Some("a-branch-nobody-has".to_owned())),
+        ..leon_core::TaskPatch::default()
+    };
+    h.store.update_task(&id, &patch, 2).unwrap();
+    cx.executor().advance_clock(REFRESH * 2);
+    h.settle(cx);
+    let card = h.store.task(&id).unwrap();
+    assert_eq!(
+        h.shell(cx, |s| s.work_of(&card)),
+        Work::Gone("a-branch-nobody-has".to_owned())
+    );
+    assert!(h.shows_dynamic("tasks-branch-1-0".to_owned(), cx));
+    h.press("e", cx);
+    assert!(h.shows("task-work-gone", cx));
+    assert!(!h.shows("task-action-session", cx));
 }

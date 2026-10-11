@@ -2141,7 +2141,7 @@ pub const BINDINGS: &[Binding] = &[
     ),
     bind(
         C::StartTask,
-        "Start work on the task\u{2026}",
+        "Create worktree for the task\u{2026}",
         S::View,
         W::Anywhere,
         &[],
@@ -2492,7 +2492,7 @@ pub fn keywords(command: Command) -> &'static str {
         C::DeleteDen => "den layout remove discard",
         C::OpenDensFolder => "dens folder directory reveal finder files json export import share",
         C::ShowUsage | C::RefreshUsage => "limits quota rate tokens credits remaining percent reset five hour weekly claude codex opencode",
-        C::ShowTasks | C::NewTask | C::StartTask => "tasks worktree session code start work board kanban todo issues backlog doing review done cards columns agents github linear create add",
+        C::ShowTasks | C::NewTask | C::StartTask => "tasks worktree session code start work create board kanban todo issues backlog doing review done cards columns agents github linear create add",
         C::SettleSession | C::BringBackSession => "shelf archive put away done finished sessions sidebar return restore",
         C::SnoozeSession => "shelf hide later remind wake tomorrow hour sessions sidebar",
         C::Undo => "revert take back last close sleep settle snooze unpin banner",

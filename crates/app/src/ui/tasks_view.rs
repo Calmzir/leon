@@ -43,7 +43,8 @@ use leon_core::{
 
 use super::home::Nav;
 use super::shell::{Main, Pane, Shell};
-use super::widgets::{key_cap, mark, mono, Lion};
+use super::task_detail::{work_phrase, Work};
+use super::widgets::{activity_dot, key_cap, mark, mono, Lion};
 use crate::engine::Op;
 use crate::icons::{agent_icon, icon, IconName};
 use crate::keys::Command;
@@ -973,19 +974,54 @@ impl Shell {
             footer = footer.child(agent_icon(agent, px(12.), &c));
         }
         footer = footer.child(mono(meta));
-        if let Some(branch) = &task.branch {
-            footer = footer.child(
+        // Where the work on it is, and whether it is active: the branch and
+        // what the session in its worktree is doing.
+        let work_row = match self.work_of(task) {
+            Work::None => None,
+            Work::Here {
+                branch, activity, ..
+            } => {
+                let (phrase, tone) = work_phrase(activity, &c);
+                Some(
+                    div()
+                        .debug_selector(move || format!("tasks-branch-{column}-{row}"))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .pt(px(6.))
+                        .border_t_1()
+                        .border_color(c.border)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(activity_dot(activity, &c))
+                                .child(icon(IconName::GitBranch, px(11.), c.success))
+                                .child(mono(branch).min_w_0().truncate().text_color(c.text)),
+                        )
+                        .child(
+                            mono(phrase.to_owned())
+                                .debug_selector(move || format!("tasks-work-{column}-{row}"))
+                                .text_size(metrics::TEXT_SMALL())
+                                .text_color(tone),
+                        ),
+                )
+            }
+            Work::Gone(branch) => Some(
                 div()
                     .debug_selector(move || format!("tasks-branch-{column}-{row}"))
-                    .min_w_0()
                     .flex()
                     .items_center()
-                    .gap(px(3.))
-                    .text_color(c.success)
-                    .child(icon(IconName::GitBranch, px(11.), c.success))
-                    .child(mono(branch.clone()).truncate()),
-            );
-        }
+                    .gap(px(6.))
+                    .pt(px(6.))
+                    .border_t_1()
+                    .border_color(c.border)
+                    .text_color(c.text_faint)
+                    .child(icon(IconName::GitBranch, px(11.), c.text_faint))
+                    .child(mono(format!("{branch} · worktree removed")).truncate()),
+            ),
+        };
         let mut labels = div().flex().flex_wrap().gap(px(4.));
         for label in &task.labels {
             labels = labels.child(
@@ -1034,7 +1070,8 @@ impl Shell {
                             .child(title),
                     )
                     .when(!task.labels.is_empty(), |this| this.child(labels))
-                    .child(footer),
+                    .child(footer)
+                    .children(work_row),
             )
             .when(line, |this| {
                 this.child(
@@ -1157,7 +1194,7 @@ impl Shell {
             .child(hint("⇧", "carry the card"))
             .child(hint("drag", "move it anywhere"))
             .child(hint("e", "details"))
-            .child(hint("w", "start work"))
+            .child(hint("w", "create worktree"))
             .child(hint("n", "new"))
             .child(hint("d", "done"))
             .child(hint("p", "priority"))

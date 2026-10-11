@@ -3,7 +3,7 @@
 //! It reads and edits what a card cannot show: the title, the description
 //! (several lines), who it is for, its labels, its status and priority, and
 //! where the work on it is. What can be done to it is in view at the bottom:
-//! start work or open its worktree, finish, cancel, delete. It floats over
+//! create its worktree or open it, finish, cancel, delete. It floats over
 //! the columns and pushes nothing: they keep their width and the cards that
 //! are not under it can still be dragged while it is open.
 //!
@@ -29,9 +29,10 @@ use gpui_kit::{
 };
 use leon_core::{Task as Card, TaskPatch, TaskPriority, TaskStatus};
 
+use super::activity::Activity;
 use super::shell::{Pane, Shell};
 use super::updates_view::pill;
-use super::widgets::{mono, text_input};
+use super::widgets::{activity_dot, mono, text_input};
 use crate::engine::Op;
 use crate::icons::{agent_icon, icon, IconName};
 use crate::task_board::{self, Fields};
@@ -68,6 +69,40 @@ pub struct DetailUi {
     pub error: Option<String>,
 }
 
+/// Where the work on a task is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Work {
+    /// No worktree was made for it.
+    None,
+    /// It has a branch and the project has no worktree on it any more.
+    Gone(String),
+    /// Its worktree is in the tree.
+    Here {
+        /// The branch.
+        branch: String,
+        /// The folder of the worktree.
+        path: String,
+        /// How its terminals are doing.
+        activity: Activity,
+        /// How many sessions of it are open in this window.
+        sessions: usize,
+    },
+}
+
+/// What the activity of a worktree says of the work on its task, and the
+/// colour it is said in. A worktree with a session open is *active*.
+pub(super) fn work_phrase(activity: Activity, c: &Palette) -> (&'static str, Hsla) {
+    match activity {
+        Activity::Working => ("ACTIVE · WORKING", c.success),
+        Activity::TurnOver => ("ACTIVE · READY FOR YOU", c.info),
+        Activity::Waiting => ("ACTIVE · WAITING FOR YOU", c.warning),
+        Activity::NeedsYou => ("ACTIVE · ASKS YOU", c.warning),
+        Activity::Failed => ("ACTIVE · FAILED", c.error),
+        Activity::Idle => ("ACTIVE · AT THE PROMPT", c.text_muted),
+        Activity::Off => ("WORKTREE · NO SESSION", c.text_faint),
+    }
+}
+
 fn status_colour(status: TaskStatus, c: &Palette) -> Hsla {
     match status {
         TaskStatus::Backlog => c.text_muted,
@@ -95,6 +130,34 @@ fn caption(text: &str, c: &Palette) -> Div {
 }
 
 impl Shell {
+    /// Where the work on a task is: the worktree its branch names, and how
+    /// the terminals in it are doing.
+    pub(super) fn work_of(&self, task: &Card) -> Work {
+        let Some(branch) = task.branch.clone() else {
+            return Work::None;
+        };
+        let found = self
+            .tasks_ui
+            .project
+            .as_ref()
+            .and_then(|project| self.snapshot.project(project))
+            .and_then(|entry| {
+                entry
+                    .worktrees
+                    .iter()
+                    .find(|worktree| worktree.branch.as_deref() == Some(branch.as_str()))
+            });
+        match found {
+            Some(worktree) => Work::Here {
+                path: worktree.path.clone(),
+                activity: self.worktree_activity(&worktree.id),
+                sessions: self.placement.live_of_worktree(&worktree.id).len(),
+                branch,
+            },
+            None => Work::Gone(branch),
+        }
+    }
+
     /// Whether the drawer is open.
     pub(super) fn detail_open(&self) -> bool {
         self.tasks_ui.detail.is_some()
@@ -554,18 +617,87 @@ impl Shell {
                 .child(field(text_input(&detail.assignee).into_any_element())),
         );
         // Where the work is.
-        let work = match &card.branch {
-            Some(branch) => div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_color(c.success)
-                .child(icon(IconName::GitBranch, px(12.), c.success))
-                .child(mono(branch.clone()).truncate()),
-            None => div()
+        let linked = self.work_of(&card);
+        let work = match &linked {
+            Work::None => div()
+                .debug_selector(|| "task-work-none".into())
                 .text_size(metrics::TEXT_SMALL())
                 .text_color(c.text_muted)
-                .child("No worktree yet: start work to make one and open a session in it."),
+                .child(
+                    "No worktree yet. Create one to code this task: a branch, a folder \
+                     and a session of the agent you pick.",
+                ),
+            Work::Gone(branch) => div()
+                .debug_selector(|| "task-work-gone".into())
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_color(c.text_muted)
+                        .child(icon(IconName::GitBranch, px(12.), c.text_muted))
+                        .child(mono(branch.clone()).truncate()),
+                )
+                .child(
+                    div()
+                        .text_size(metrics::TEXT_SMALL())
+                        .text_color(c.warning)
+                        .child("Its worktree is not in the tree any more. Create it again to keep working."),
+                ),
+            Work::Here {
+                branch,
+                path,
+                activity,
+                sessions,
+            } => {
+                let (phrase, tone) = work_phrase(*activity, &c);
+                div()
+                    .debug_selector(|| "task-work-here".into())
+                    .flex()
+                    .flex_col()
+                    .gap(px(5.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(activity_dot(*activity, &c))
+                            .child(
+                                mono(phrase.to_owned())
+                                    .debug_selector(|| "task-work-state".into())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(tone),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_color(c.text)
+                            .child(icon(IconName::GitBranch, px(12.), c.success))
+                            .child(mono(branch.clone()).truncate()),
+                    )
+                    .child(
+                        mono(path.clone())
+                            .truncate()
+                            .text_size(metrics::TEXT_SMALL())
+                            .text_color(c.text_faint),
+                    )
+                    .child(
+                        div()
+                            .text_size(metrics::TEXT_SMALL())
+                            .text_color(c.text_muted)
+                            .child(match sessions {
+                                0 => "No session is open in it.".to_owned(),
+                                1 => "1 session open in it.".to_owned(),
+                                n => format!("{n} sessions open in it."),
+                            }),
+                    )
+            }
         };
         let ago = |at: i64| {
             let seconds = (self.now().timestamp_millis() - at).max(0) / 1000;
@@ -641,7 +773,11 @@ impl Shell {
 
         // What can be done to it, always in view.
         let id = card.id.clone();
-        let started = card.branch.is_some();
+        let started = matches!(linked, Work::Here { .. });
+        let sessions = match &linked {
+            Work::Here { sessions, .. } => *sessions,
+            _ => 0,
+        };
         let finished = card.status.is_closed();
         let mut actions = div().flex().flex_wrap().gap(px(6.));
         actions = actions.child(
@@ -650,7 +786,7 @@ impl Shell {
                 if started {
                     "Open worktree  ⏎"
                 } else {
-                    "Start work  w"
+                    "Create worktree  w"
                 },
                 &c,
             )
@@ -660,6 +796,14 @@ impl Shell {
                 cx.notify();
             })),
         );
+        if sessions > 0 {
+            actions = actions.child(pill("task-action-session", "Open session", &c).on_click(
+                cx.listener(|this, _, window, cx| {
+                    this.tasks_open_session(window, cx);
+                    cx.notify();
+                }),
+            ));
+        }
         actions = actions.child(
             pill(
                 "task-action-done",

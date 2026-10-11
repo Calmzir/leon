@@ -489,7 +489,15 @@ fn a_title_left_empty_is_refused_in_the_drawer_and_keeps_it_open(cx: &mut TestAp
 
 #[gpui_kit::test]
 fn status_priority_and_labels_apply_at_once(cx: &mut TestAppContext) {
-    let (h, id) = with_the_drawer_open(cx);
+    let h = on_api(cx);
+    // A window of the height people have: the whole drawer is in view.
+    VisualTestContext::from_window(h.window.into(), cx)
+        .simulate_resize(gpui_kit::size(px(1400.), px(1000.)));
+    h.settle(cx);
+    open_board(&h, cx);
+    let id = written_elsewhere(&h, "Fix the login", 1, cx);
+    h.press("e", cx);
+    assert!(h.shows("tasks-drawer", cx));
     h.mouse_on(
         "task-status-review".to_owned(),
         gpui_kit::MouseButton::Left,

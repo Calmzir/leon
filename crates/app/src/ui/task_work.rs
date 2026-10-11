@@ -1,5 +1,5 @@
-//! Starting work on a task, in the window: a worktree and a session to code
-//! it.
+//! Creating the worktree of a task, in the window: a worktree and a session
+//! to code it.
 //!
 //! What the branch is called and what the agent is told are decided by
 //! [`crate::task_work`]. This file carries it out the way "One prompt,
@@ -50,6 +50,42 @@ impl Shell {
         }
         self.tasks_ui.return_from_palette = true;
         self.begin_flow(crate::keys::Command::StartTask, window, cx);
+    }
+
+    /// Opens the first session that runs in the worktree of the task under
+    /// the cursor.
+    pub(super) fn tasks_open_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(task) = self.tasks_ui.board.selected().cloned() else {
+            return;
+        };
+        let Some(project) = self.tasks_ui.project.clone() else {
+            return;
+        };
+        let worktree = task.branch.as_deref().and_then(|branch| {
+            self.snapshot.project(&project).and_then(|entry| {
+                entry
+                    .worktrees
+                    .iter()
+                    .find(|worktree| worktree.branch.as_deref() == Some(branch))
+                    .map(|worktree| worktree.id.clone())
+            })
+        });
+        let session = worktree.and_then(|id| {
+            self.placement
+                .live_of_worktree(&id)
+                .first()
+                .map(|place| self.placement.live[*place].id)
+        });
+        match session {
+            Some(id) => {
+                self.tasks_ui.refresher_stop();
+                self.open_live(id, window, cx);
+                self.home.nav = None;
+            }
+            None => self
+                .engine
+                .report(StatusKind::Info, "No session is open in its worktree."),
+        }
     }
 
     /// Selects the worktree of `branch` in the tree and shows it. `false`

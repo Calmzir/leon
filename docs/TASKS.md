@@ -77,7 +77,7 @@ nothing. Dropping a card where it already is changes nothing.
 | `←` `→` or `h` `l` | Cursor to the column on the left or right |
 | `↑` `↓` or `k` `j` | Cursor to the card above or below |
 | `Shift` + those | Carry the card: to the bottom of the next column, or one place up or down in its own |
-| `w` or `Enter` | Start work on the card (see below), or open its worktree |
+| `w` or `Enter` | Create the card's worktree (see below), or open the one it has |
 | `e` | Open the card's details beside the columns, or close them |
 | `n` | Ask for the title of a new task, in the cursor's column |
 | `d` | Finish the card |
@@ -100,10 +100,11 @@ still be dragged. It holds what a card cannot show:
 * the **status** and the **priority**, as buttons that apply at once;
 * who it is **assigned to** (the agent's mark when it is one);
 * the **labels**: each with its way out, and a field that adds one with Enter;
-* **where the work is**: the branch of its worktree, or that there is none yet;
+* **where the work is**: the worktree it is linked to, whether it is active and
+  what its session is doing, or that there is none yet;
 * when it was created, by whom, and when it last changed;
-* every **action**, always in view at the bottom: *Start work* (or *Open
-  worktree*), *Mark done* (or *Reopen*), *Cancel task*, *Delete* (it asks
+* every **action**, always in view at the bottom: *Create worktree* (or *Open
+  worktree*, and *Open session*), *Mark done* (or *Reopen*), *Cancel task*, *Delete* (it asks
   twice) and *Save changes*.
 
 The text fields are saved as one patch of only what changed: when asked
@@ -118,10 +119,11 @@ while it is open is still the one shown; one that is deleted elsewhere says
 "removed elsewhere". Reading the board again never touches what is being
 typed.
 
-### Start work on a task
+### Create the worktree of a task
 
-`w` on a card of a project's board asks which agent codes it (the agents
-installed here that take a prompt, or **Only a worktree**), then:
+`w` on a card of a project's board (or **Create worktree** in its details) asks
+which agent codes it (the agents installed here that take a prompt, or **Only a
+worktree**), then:
 
 1. makes a worktree named from the title and the task's short id
    (`fix-the-login-1a2b3c4d`; a number is added if git has that name);
@@ -131,10 +133,24 @@ installed here that take a prompt, or **Only a worktree**), then:
 3. **only then** writes the card: its branch, the column `doing` and, when
    nobody had it, the agent as assignee.
 
-A worktree that git refuses leaves the card where it was and says why. A card
-with a branch shows it on the card, and `w` opens that worktree instead of
-making another; when the worktree is gone, `w` starts the work again. The
-global board cannot start work: it has no project to make a worktree in.
+A worktree that git refuses leaves the card where it was and says why.
+
+**The link.** A card with a branch is linked to the worktree of that branch,
+and says so wherever it is seen:
+
+* on the card: a dot and the branch, and under it what the work is doing,
+  from the sessions that run in that worktree — `ACTIVE · WORKING`,
+  `ACTIVE · READY FOR YOU`, `ACTIVE · WAITING FOR YOU`, `ACTIVE · ASKS YOU`,
+  `ACTIVE · FAILED`, `ACTIVE · AT THE PROMPT`, or `WORKTREE · NO SESSION` when
+  none is open;
+* in the details: the same phrase, the branch, the folder and how many
+  sessions are open, with **Open worktree** (selects it in the tree) and
+  **Open session** (goes to its terminal);
+* when the worktree is removed, the card says `worktree removed` and
+  **Create worktree** makes it again.
+
+`w` on a linked card opens the worktree instead of making another. The global
+board cannot create worktrees: it has no project to make one in.
 
 ## The command line
 
