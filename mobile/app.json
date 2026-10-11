@@ -9,14 +9,14 @@
     "icon": "./assets/icon.png",
     "backgroundColor": "#0A0A0A",
     "ios": {
-      "bundleIdentifier": "zavudev.leon",
+      "bundleIdentifier": "dev.zavu.leon",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "zavudev.leon",
+      "package": "dev.zavu.leon",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-foreground.png",
         "monochromeImage": "./assets/adaptive-monochrome.png",

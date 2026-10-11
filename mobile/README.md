@@ -97,8 +97,8 @@ bunx eas-cli build --profile development --platform android
 bunx eas-cli build --profile development --platform ios
 ```
 
-`ios.bundleIdentifier` and `android.package` are both `zavudev.leon`: Leon is
-Zavu's. An iOS build for devices needs an Apple Developer account that owns
+`ios.bundleIdentifier` and `android.package` are both `dev.zavu.leon`: Leon is
+Zavu's, whose domain is zavu.dev. An iOS build for devices needs an Apple Developer account that owns
 that identifier.
 
 ## Checks
