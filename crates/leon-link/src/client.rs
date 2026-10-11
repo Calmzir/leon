@@ -13,6 +13,17 @@
 //!
 //! The connection state is observable ([`Client::watch`]) and, when it is not
 //! `Online`, says why ([`Failure`]) in terms a person can act on.
+//!
+//! A host speaks one wire version; a client speaks every version from
+//! [`MIN_CLIENT_PROTOCOL`] to [`PROTOCOL_VERSION`] and finds the host's. A host
+//! that cannot read a greeting hangs up without a word, so the client takes
+//! "accepted the handshake, then closed" as "another version", tries the next
+//! one on a new connection, and remembers what worked ([`Client::protocol`]).
+//! A device the host does not accept is refused at the handshake, before any
+//! version is spoken, and is never retried. The version only selects the
+//! layout of the messages inside the encrypted session: nothing a relay can
+//! do to steer it weakens the session, and a request the host's version
+//! cannot express fails by itself, with the connection kept.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -23,8 +34,9 @@ use std::time::Duration;
 
 use leon_wire::relay::RelayErrorCode;
 use leon_wire::{
-    ErrorCode, ExecOutput, ExecSpec, Exit, Grid, HostId, Message, PtyInfo, SharedProject,
-    SharedSession, SharedTranscript, WireError, PROTOCOL_VERSION,
+    ErrorCode, ExecOutput, ExecSpec, Exit, FrameError, Grid, HostId, Message, PtyInfo,
+    SharedProject, SharedSession, SharedTranscript, WireError, MIN_CLIENT_PROTOCOL,
+    PROTOCOL_VERSION,
 };
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -394,6 +406,7 @@ pub struct Client {
     state: watch::Receiver<ConnState>,
     ids: Arc<AtomicU64>,
     host_name: watch::Receiver<Option<String>>,
+    protocol: watch::Receiver<Option<u16>>,
 }
 
 impl std::fmt::Debug for Client {
@@ -416,12 +429,14 @@ impl Client {
         let (commands, command_rx) = mpsc::channel(256);
         let (state_tx, state) = watch::channel(ConnState::Connecting);
         let (name_tx, host_name) = watch::channel(None);
-        tokio::spawn(actor(config, command_rx, state_tx, name_tx));
+        let (protocol_tx, protocol) = watch::channel(None);
+        tokio::spawn(actor(config, command_rx, state_tx, name_tx, protocol_tx));
         Self {
             commands,
             state,
             ids: Arc::new(AtomicU64::new(1)),
             host_name,
+            protocol,
         }
     }
 
@@ -438,6 +453,13 @@ impl Client {
     /// The name the host gave itself, once connected.
     pub fn host_name(&self) -> Option<String> {
         self.host_name.borrow().clone()
+    }
+
+    /// The wire version agreed with the host the last time a connection
+    /// opened: [`PROTOCOL_VERSION`], or an older one the host still speaks.
+    /// `None` until the first connection.
+    pub fn protocol(&self) -> Option<u16> {
+        *self.protocol.borrow()
     }
 
     /// Waits until online, up to `limit`.
@@ -705,53 +727,124 @@ impl Wire {
             Wire::Plain(channel) => channel.recv().await,
         }
     }
+
+    /// The protocol version its frames are written in.
+    fn protocol(&self) -> u16 {
+        match self {
+            Wire::Secure(channel) => channel.protocol(),
+            Wire::Plain(_) => PROTOCOL_VERSION,
+        }
+    }
 }
 
-async fn establish(config: &ClientConfig) -> Result<(Wire, String), (Failure, String)> {
-    let pipe = config.dialer.dial().await.map_err(|e| classify_dial(&e))?;
+/// Why one attempt to open a session failed.
+enum Refusal {
+    /// The host is there and knows this device, but did not answer in the
+    /// version tried: another one may work.
+    OtherVersion,
+    /// Anything else; trying another version would not help.
+    Failed(Failure, String),
+}
+
+const NO_COMMON_VERSION: &str =
+    "the other computer runs a version of Leon this one cannot talk to: update Leon on one of the two";
+
+fn refused(error: &LinkError) -> Refusal {
+    let (failure, reason) = classify(error);
+    Refusal::Failed(failure, reason)
+}
+
+/// Opens a session speaking `version`.
+async fn establish_as(config: &ClientConfig, version: u16) -> Result<(Wire, String), Refusal> {
+    let pipe = config.dialer.dial().await.map_err(|e| {
+        let (failure, reason) = classify_dial(&e);
+        Refusal::Failed(failure, reason)
+    })?;
     let mut channel = match &config.security {
-        Security::Noise { identity, host_key } => Wire::Secure(Box::new(
-            connect(pipe, identity, host_key)
+        // A device the host does not know, or has revoked, is turned away
+        // here, before any version is spoken.
+        Security::Noise { identity, host_key } => {
+            let mut secure = connect(pipe, identity, host_key)
                 .await
-                .map_err(|e| classify(&e))?,
-        )),
+                .map_err(|e| refused(&e))?;
+            secure.set_protocol(version);
+            Wire::Secure(Box::new(secure))
+        }
         Security::Plain => Wire::Plain(PlainChannel::new(pipe)),
     };
     channel
         .send(&Message::Hello {
-            protocol: PROTOCOL_VERSION,
+            protocol: version,
             app_version: env!("CARGO_PKG_VERSION").into(),
             device_name: config.device_name.clone(),
             token: config.token.clone(),
         })
         .await
-        .map_err(|e| classify(&e))?;
+        .map_err(|e| refused(&e))?;
     match tokio::time::timeout(Duration::from_secs(10), channel.recv()).await {
         Ok(Ok(Some(Message::Hello {
             protocol,
             device_name,
             ..
-        }))) if protocol == PROTOCOL_VERSION => Ok((channel, device_name)),
-        Ok(Ok(Some(Message::Hello { .. }))) => Err((
-            Failure::VersionMismatch,
-            "the other computer runs an incompatible version of Leon".into(),
-        )),
+        }))) if protocol == version => Ok((channel, device_name)),
+        Ok(Ok(Some(Message::Hello { .. }))) => Err(Refusal::OtherVersion),
         Ok(Ok(Some(Message::Error { error, .. }))) if error.code == ErrorCode::Unsupported => {
-            Err((
-                Failure::VersionMismatch,
-                "the other computer runs an incompatible version of Leon".into(),
-            ))
+            Err(Refusal::OtherVersion)
         }
         Ok(Ok(Some(Message::Error { error, .. }))) if error.code == ErrorCode::Forbidden => {
-            Err((Failure::Revoked, error.message))
+            Err(Refusal::Failed(Failure::Revoked, error.message))
         }
-        // The host closes without answering a device it does not know.
-        Ok(Ok(None)) => Err((
+        // A keeper on this computer's socket has no handshake before the
+        // greeting: hanging up without a word is how it refuses a stranger.
+        Ok(Ok(None)) if matches!(config.security, Security::Plain) => Err(Refusal::Failed(
             Failure::Revoked,
             "the other computer closed the connection (it may have revoked this device)".into(),
         )),
-        _ => Err((Failure::Other, "the other computer did not greet us".into())),
+        // A host that accepted the handshake knows this device. One that
+        // then hangs up without a word could not read the greeting: it
+        // speaks another version (it never says so, it cannot).
+        Ok(Ok(None)) => Err(Refusal::OtherVersion),
+        // Its answer came in a frame of another version.
+        Ok(Err(LinkError::Frame(FrameError::UnsupportedVersion(_)))) => Err(Refusal::OtherVersion),
+        _ => Err(Refusal::Failed(
+            Failure::Other,
+            "the other computer did not greet us".into(),
+        )),
     }
+}
+
+/// The versions to try, in order: the one that worked last time first (so a
+/// reconnection costs one attempt), then the others from the newest down.
+fn versions_to_try(preferred: Option<u16>) -> Vec<u16> {
+    let mut order: Vec<u16> = preferred.into_iter().collect();
+    for version in (MIN_CLIENT_PROTOCOL..=PROTOCOL_VERSION).rev() {
+        if !order.contains(&version) {
+            order.push(version);
+        }
+    }
+    order
+}
+
+/// Opens a session in the newest version the host speaks, each try on a
+/// connection of its own. Returns the channel, the host's name and the
+/// version.
+async fn establish(
+    config: &ClientConfig,
+    preferred: Option<u16>,
+) -> Result<(Wire, String, u16), (Failure, String)> {
+    // A keeper on this computer's own socket is this same Leon: one version.
+    let versions = match config.security {
+        Security::Plain => vec![PROTOCOL_VERSION],
+        Security::Noise { .. } => versions_to_try(preferred),
+    };
+    for version in versions {
+        match establish_as(config, version).await {
+            Ok((channel, name)) => return Ok((channel, name, version)),
+            Err(Refusal::OtherVersion) => continue,
+            Err(Refusal::Failed(failure, reason)) => return Err((failure, reason)),
+        }
+    }
+    Err((Failure::VersionMismatch, NO_COMMON_VERSION.into()))
 }
 
 async fn actor(
@@ -759,15 +852,18 @@ async fn actor(
     mut commands: mpsc::Receiver<Command>,
     state: watch::Sender<ConnState>,
     host_name: watch::Sender<Option<String>>,
+    protocol: watch::Sender<Option<u16>>,
 ) {
     let mut ptys: HashMap<u64, LivePty> = HashMap::new();
+    // The version that worked last, tried first the next time.
+    let mut spoken: Option<u16> = None;
     let mut attempt = 0u32;
     let mut delay = config.backoff.0;
     let mut halted = false;
     loop {
         if !halted {
             let established = tokio::select! {
-                result = establish(&config) => Some(result),
+                result = establish(&config, spoken) => Some(result),
                 command = commands.recv() => match command {
                     None | Some(Command::Close) => break,
                     Some(Command::Request { reply, .. }) => {
@@ -778,9 +874,11 @@ async fn actor(
                 },
             };
             match established {
-                Some(Ok((channel, name))) => {
+                Some(Ok((channel, name, version))) => {
                     attempt = 0;
                     delay = config.backoff.0;
+                    spoken = Some(version);
+                    protocol.send_replace(Some(version));
                     host_name.send_replace(Some(name));
                     state.send_replace(ConnState::Online);
                     match run_connection(&config, channel, &mut commands, &mut ptys).await {
@@ -879,9 +977,26 @@ async fn run_connection(
                     }
                 }
                 Some(Command::Request { id, message, stream, reply }) => {
-                    pending.insert(id, (reply, stream));
-                    if channel.send(&message).await.is_err() {
-                        break Ended::Dropped(Failure::Other, "the connection dropped".into());
+                    match channel.send(&message).await {
+                        Ok(()) => {
+                            pending.insert(id, (reply, stream));
+                        }
+                        // Nothing was sent: the host is older than what the
+                        // request needs. That is this request's problem, not
+                        // the connection's.
+                        Err(LinkError::Frame(FrameError::NeedsVersion(needed))) => {
+                            let _ = reply.send(Err(ClientError::Remote(WireError {
+                                code: ErrorCode::Unsupported,
+                                message: format!(
+                                    "the other computer runs an older Leon that cannot do this (it speaks protocol {}, this needs {needed}): update Leon there",
+                                    channel.protocol()
+                                ),
+                            })));
+                        }
+                        Err(_) => {
+                            let _ = reply.send(Err(ClientError::Disconnected));
+                            break Ended::Dropped(Failure::Other, "the connection dropped".into());
+                        }
                     }
                 }
             },

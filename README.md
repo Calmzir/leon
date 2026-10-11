@@ -412,6 +412,14 @@ Limits: remote history is not imported yet (only sessions started from Leon on
 that machine are known), pasting an image works for local terminals only, and a
 remote Windows machine is not supported.
 
+### From a phone
+
+`mobile/` holds Leon for iPhone and Android: a chat that pairs with a shared
+computer by the same code, sends a prompt to an agent there and shows the
+answer as it is written. It uses the same end-to-end encrypted protocol through
+the Rust crate `leon-mobile`. See [mobile/README.md](mobile/README.md) to build
+it; it is not part of the desktop releases.
+
 ## Shortcuts
 
 One registry (`crates/app/src/keys.rs`) defines every shortcut; the palette,

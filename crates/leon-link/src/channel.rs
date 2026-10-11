@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use leon_wire::{decode_frame, encode_frame, FrameError, Message};
+use leon_wire::{decode_frame_as, encode_frame_for, FrameError, Message, PROTOCOL_VERSION};
 use thiserror::Error;
 
 use crate::identity::Identity;
@@ -48,12 +48,31 @@ impl From<PipeClosed> for LinkError {
 pub struct SecureChannel {
     pipe: Pipe,
     session: Session,
+    /// The wire version of the messages on this channel.
+    protocol: u16,
 }
 
 impl SecureChannel {
     /// A channel over an established session.
     pub fn new(pipe: Pipe, session: Session) -> Self {
-        Self { pipe, session }
+        Self {
+            pipe,
+            session,
+            protocol: PROTOCOL_VERSION,
+        }
+    }
+
+    /// The wire version [`send`](Self::send) writes and
+    /// [`recv`](Self::recv) accepts: [`PROTOCOL_VERSION`] unless told
+    /// otherwise.
+    pub fn protocol(&self) -> u16 {
+        self.protocol
+    }
+
+    /// Speaks `version` from here on. Only a client does this, to reach a
+    /// host that has not been updated; a host never leaves its own version.
+    pub fn set_protocol(&mut self, version: u16) {
+        self.protocol = version;
     }
 
     /// The peer's authenticated static key.
@@ -94,7 +113,7 @@ impl SecureChannel {
 
     /// Sends a protocol message.
     pub async fn send(&mut self, message: &Message) -> Result<(), LinkError> {
-        let frame = encode_frame(message)?;
+        let frame = encode_frame_for(message, self.protocol)?;
         self.send_bytes(&frame).await
     }
 
@@ -103,7 +122,7 @@ impl SecureChannel {
         match self.recv_bytes().await? {
             None => Ok(None),
             Some(bytes) => {
-                let (message, used) = decode_frame(&bytes)?;
+                let (message, used) = decode_frame_as(&bytes, self.protocol)?;
                 if used != bytes.len() {
                     return Err(FrameError::Malformed("trailing bytes".into()).into());
                 }

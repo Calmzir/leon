@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.getleon'
+version = '0.5.0'
+
+android {
+  namespace "dev.getleon.background"
+  defaultConfig {
+    versionCode 1
+    versionName '0.5.0'
+  }
+}

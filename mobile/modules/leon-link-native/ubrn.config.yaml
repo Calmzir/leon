@@ -1,0 +1,18 @@
+# How uniffi-bindgen-react-native builds and wraps crates/leon-mobile.
+# Reference: node_modules/uniffi-bindgen-react-native/docs/src/reference/config-yaml.md
+rust:
+  directory: ../../..
+  manifestPath: crates/leon-mobile/Cargo.toml
+bindings:
+  cpp: cpp/generated
+  ts: src/generated
+android:
+  # A phone and the emulator of an Intel or Apple-silicon computer.
+  targets:
+    - arm64-v8a
+    - x86_64
+  apiLevel: 24
+ios:
+  targets:
+    - aarch64-apple-ios
+    - aarch64-apple-ios-sim

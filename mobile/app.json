@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Leon",
+    "slug": "leon",
+    "version": "0.5.0",
+    "scheme": "leon",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "backgroundColor": "#0A0A0A",
+    "ios": {
+      "bundleIdentifier": "dev.getleon.mobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "dev.getleon.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "monochromeImage": "./assets/adaptive-monochrome.png",
+        "backgroundColor": "#0A0A0A"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-mark.png",
+          "imageWidth": 96,
+          "backgroundColor": "#0A0A0A"
+        }
+      ],
+      "expo-status-bar",
+      "expo-sqlite",
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Leon uses the camera to scan the pairing code shown on your computer.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6e57f647-b20c-449e-b798-af94712d74e0"
+      }
+    },
+    "owner": "zavudev"
+  }
+}

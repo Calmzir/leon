@@ -51,6 +51,9 @@ pub const CODE_LIFETIME: Duration = Duration::from_secs(600);
 pub const MAX_FAILED_ATTEMPTS: u32 = 5;
 /// How long one step of pairing may take.
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the client waits for the host's answer to its `Hello`: the host may
+/// be asking its owner, who has two minutes to answer, so this must outlast that.
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(150);
 /// Marks a plain refusal sent instead of the SPAKE2 answer.
 const REFUSAL_TAG: u8 = 0xE0;
 
@@ -425,8 +428,8 @@ async fn next(pipe: &mut Pipe) -> Result<Vec<u8>, PairError> {
     }
 }
 
-async fn next_secure(channel: &mut SecureChannel) -> Result<PairMsg, PairError> {
-    let bytes = match tokio::time::timeout(STEP_TIMEOUT, channel.recv_bytes()).await {
+async fn next_secure(channel: &mut SecureChannel, limit: Duration) -> Result<PairMsg, PairError> {
+    let bytes = match tokio::time::timeout(limit, channel.recv_bytes()).await {
         Err(_) => return Err(PairError::Timeout),
         Ok(Err(_)) => return Err(PairError::NotAccepted),
         Ok(Ok(None)) => return Err(PairError::NotAccepted),
@@ -515,7 +518,7 @@ pub async fn pair_as_client(
     })
     .map_err(|_| PairError::Protocol)?;
     channel.send_bytes(&hello).await?;
-    match next_secure(&mut channel).await? {
+    match next_secure(&mut channel, APPROVAL_TIMEOUT).await? {
         PairMsg::Welcome {
             host_name,
             verifying_key,
@@ -567,7 +570,7 @@ where
     let session = steps.on_noise3(&n3)?;
     let device_key = session.remote_static();
     let mut channel = SecureChannel::new(pipe, session);
-    let PairMsg::Hello { device_name } = next_secure(&mut channel).await? else {
+    let PairMsg::Hello { device_name } = next_secure(&mut channel, STEP_TIMEOUT).await? else {
         return Err(PairError::Protocol);
     };
     let device_name: String = device_name.chars().take(64).collect();

@@ -1,0 +1,12 @@
+{
+  "name": "leon-background",
+  "version": "0.5.0",
+  "description": "Keeps Leon's link alive behind other applications on Android, and posts what an agent needs as system notifications.",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

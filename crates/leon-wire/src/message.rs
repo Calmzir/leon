@@ -23,6 +23,10 @@ use crate::frame::FrameError;
 
 /// The protocol version this crate speaks.
 pub const PROTOCOL_VERSION: u16 = 2;
+/// The oldest version a client can still speak to a host that has not been
+/// updated (see [`encode_frame_for`](crate::encode_frame_for)). A host speaks
+/// [`PROTOCOL_VERSION`] only.
+pub const MIN_CLIENT_PROTOCOL: u16 = 1;
 /// The most terminal bytes one [`Message::PtyData`] carries.
 pub const MAX_PTY_CHUNK: usize = 32 * 1024;
 /// The most bytes kept of a command's output, per stream; the rest is

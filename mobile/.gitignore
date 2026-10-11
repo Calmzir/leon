@@ -1,0 +1,6 @@
+# Continuous native generation: `expo prebuild` writes these, nothing is edited by hand.
+/android/
+/ios/
+/dist/
+expo-env.d.ts
+.expo/
