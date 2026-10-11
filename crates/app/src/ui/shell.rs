@@ -4061,6 +4061,10 @@ impl Render for Shell {
         self.watch_project_file();
         self.show_queued_trust(window, cx);
         // Terminals wear the theme and the interface size in use.
+        if !self.share_ui.started {
+            self.share_ui.started = true;
+            self.sync_share(cx);
+        }
         self.sync_settings(cx);
         self.sync_editor_prefs(window, cx);
         // The file tree follows the folder in view.

@@ -37,6 +37,10 @@ pub struct ShareUi {
     /// The QR of the pairing link on screen. The screen is drawn again every
     /// second; the code is worked out once per link.
     qr: RefCell<Option<Rc<Qr>>>,
+    /// Whether the service was put in line with the settings once, as the
+    /// window started: no setting has changed yet then, so nothing else
+    /// would switch on the sharing that was on when Leon was closed.
+    pub started: bool,
     /// What was copied last and when, to say so for a moment.
     copied: Option<(Copied, Instant)>,
 }
