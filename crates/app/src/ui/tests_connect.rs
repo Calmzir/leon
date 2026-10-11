@@ -648,6 +648,35 @@ fn connect_a_machine_opens_with_a_code_first_and_ssh_is_the_second_method(cx: &m
 }
 
 #[gpui_kit::test]
+fn pasting_a_pairing_link_fills_the_code_and_names_its_relay(cx: &mut TestAppContext) {
+    let h = open(cx, ScriptedRunner::new());
+    h.press("ctrl-shift-m", cx);
+    assert!(h.shows("pair-paste", cx) && !h.shows("pair-relay", cx));
+    cx.update(|cx| {
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+            "leon://pair?code=abcd-efg-hjk&relay=ws%3A%2F%2F192.168.1.20%3A8787".to_owned(),
+        ))
+    });
+    h.mouse_on("pair-paste".to_owned(), gpui_kit::MouseButton::Left, cx);
+    h.settle(cx);
+    assert_eq!(
+        h.shell(cx, |s| s.pair_ui.relay.clone()).as_deref(),
+        Some("ws://192.168.1.20:8787")
+    );
+    let code = cx.update(|cx| h.shell.read(cx).pair_ui.code.read(cx).value().to_string());
+    assert_eq!(code, "ABCD-EFG-HJK");
+    assert!(h.shows("pair-relay", cx));
+    // A bare code is for the relay of the settings.
+    cx.update(|cx| {
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("abcdefghjm".to_owned()))
+    });
+    h.mouse_on("pair-paste".to_owned(), gpui_kit::MouseButton::Left, cx);
+    h.settle(cx);
+    assert_eq!(h.shell(cx, |s| s.pair_ui.relay.clone()), None);
+    assert!(!h.shows("pair-relay", cx));
+}
+
+#[gpui_kit::test]
 fn share_this_machine_opens_from_the_sidebar_and_states_the_risk(cx: &mut TestAppContext) {
     let h = open(cx, ScriptedRunner::new());
     assert!(h.shows("sidebar-share", cx));

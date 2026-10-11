@@ -11,7 +11,7 @@
 //! the share requests answer is nothing at all. Every method is called with
 //! the host's own machine in mind: the machine Leon runs on.
 
-use leon_wire::{SharedEntry, SharedProject, SharedSession, SharedTranscript};
+use leon_wire::{SharedCub, SharedEntry, SharedProject, SharedSession, SharedTranscript};
 
 /// How many transcript bytes one `ShareTranscriptData` may carry, counted as
 /// its entries' text: a near-frame-sized reply is a reply that may fail to be
@@ -29,6 +29,28 @@ pub trait ShareSource: Send + Sync {
     /// list at [`SHARE_SESSIONS_LIMIT`](leon_wire::SHARE_SESSIONS_LIMIT)
     /// itself, so a source may return more.
     fn sessions(&self) -> Vec<SharedSession>;
+
+    /// The sessions pinned on this machine, in the order of its Pinned
+    /// section. The host cuts the list at
+    /// [`leon_wire::SHARE_PINNED_LIMIT`]. A source without pins has none.
+    fn pinned(&self) -> Vec<SharedSession> {
+        Vec::new()
+    }
+
+    /// The lions of this machine's Den, the sessions before their
+    /// sub-agents, or `None` from a source that has no Den to show: a client
+    /// is then told not to ask. Asking is what keeps a Den worked out while
+    /// nobody looks at it on this machine, so a source may answer with
+    /// nobody the first time.
+    fn den(&self) -> Option<Vec<SharedCub>> {
+        None
+    }
+
+    /// Whether [`ShareSource::den`] answers. It must not cost anything: it
+    /// is asked with every state.
+    fn has_den(&self) -> bool {
+        false
+    }
 
     /// The transcript of the session `(agent, external_id)` names, in order;
     /// `None` when no such session is held (it may have been removed).

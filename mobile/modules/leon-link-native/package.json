@@ -1,0 +1,56 @@
+{
+  "name": "leon-link-native",
+  "version": "0.9.0",
+  "description": "Leon's relay client for React Native: the leon-mobile Rust crate as a Turbo Module.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zavudev/leon.git",
+    "directory": "mobile/modules/leon-link-native"
+  },
+  "homepage": "https://github.com/zavudev/leon",
+  "author": "Zavu",
+  "private": true,
+  "main": "src/index.tsx",
+  "react-native": "src/index.tsx",
+  "types": "src/index.tsx",
+  "source": "src/index.tsx",
+  "files": [
+    "src",
+    "cpp",
+    "android",
+    "ios",
+    "*.podspec"
+  ],
+  "scripts": {
+    "ubrn:host": "cargo build --manifest-path ../../../Cargo.toml -p leon-mobile --lib",
+    "ubrn:generate": "bun run ubrn:host && (cd ../../.. && mobile/node_modules/.bin/ubrn generate jsi bindings --library --ts-dir mobile/modules/leon-link-native/src/generated --cpp-dir mobile/modules/leon-link-native/cpp/generated target/debug/libleon_mobile.a) && ubrn generate jsi turbo-module --config ubrn.config.yaml leon_mobile",
+    "ubrn:android": "ubrn build android --config ubrn.config.yaml --and-generate",
+    "ubrn:android:release": "ubrn build android --config ubrn.config.yaml --and-generate --release",
+    "ubrn:ios": "ubrn build ios --config ubrn.config.yaml --and-generate",
+    "ubrn:ios:release": "ubrn build ios --config ubrn.config.yaml --and-generate --release",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-6",
+    "uniffi-bindgen-react-native": "0.31.0-6"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "typescript": "~6.0.3"
+  },
+  "codegenConfig": {
+    "name": "LeonLinkNativeSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "dev.getleon.link"
+    }
+  }
+}

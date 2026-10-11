@@ -7,6 +7,8 @@
 //! with Revoke, and asks before a new one is let in. The service runs inside
 //! this process; one that survives the window is the next stage.
 
+use super::lines;
+use super::qr::{self, Qr};
 use super::shell::{Overlay, Shell};
 use super::widgets::{key_cap, led, mono, section_label};
 use crate::keys;
@@ -15,9 +17,11 @@ use crate::settings;
 use crate::share::RISK;
 use crate::theme::{metrics, px, Palette};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, Context, Div, Keystroke, Stateful, Task, Window};
+use gpui_kit::{div, ClipboardItem, Context, Div, Keystroke, Stateful, Task, Window};
 use leon_host::{ApprovalRequest, RelayState};
-use std::time::Duration;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 /// What the screen remembers.
 #[derive(Default)]
@@ -30,6 +34,48 @@ pub struct ShareUi {
     pub started_with: Option<(String, String, bool)>,
     /// Whether the sidebar's filter had the keyboard when the screen opened.
     pub restore_filter: bool,
+    /// The QR of the pairing link on screen. The screen is drawn again every
+    /// second; the code is worked out once per link.
+    qr: RefCell<Option<Rc<Qr>>>,
+    /// Whether the service was put in line with the settings once, as the
+    /// window started: no setting has changed yet then, so nothing else
+    /// would switch on the sharing that was on when Leon was closed.
+    pub started: bool,
+    /// What was copied last and when, to say so for a moment.
+    copied: Option<(Copied, Instant)>,
+}
+
+/// What "Share this machine" puts on the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Copied {
+    /// The code, to type or paste on another computer.
+    Code,
+    /// The link the QR says, to send to a phone.
+    Link,
+}
+
+/// How long a button says that it copied.
+const COPIED_FOR: Duration = Duration::from_secs(2);
+
+impl ShareUi {
+    /// The QR of `link`, from the last time when it is the same link.
+    fn qr_of(&self, link: &str) -> Option<Rc<Qr>> {
+        let mut kept = self.qr.borrow_mut();
+        if kept.as_ref().is_none_or(|qr| qr.text != link) {
+            *kept = Qr::of(link).map(Rc::new);
+        }
+        kept.clone()
+    }
+
+    fn just_copied(&self, what: Copied) -> bool {
+        self.copied
+            .is_some_and(|(kind, at)| kind == what && at.elapsed() < COPIED_FOR)
+    }
+}
+
+/// The link a pairing code is shared as, for the QR and the clipboard.
+pub fn pairing_link(code: &str, relay: &str) -> Option<String> {
+    Some(leon_link::PairingCode::parse(code)?.to_link(relay))
 }
 
 /// `mm:ss` of a duration.
@@ -96,6 +142,8 @@ impl Shell {
             "y" if self.share_ui.pending.is_some() => self.share_answer(true, cx),
             "n" if self.share_ui.pending.is_some() => self.share_answer(false, cx),
             "enter" | "space" => self.share_toggle(window, cx),
+            "c" => self.share_copy(Copied::Code, cx),
+            "l" => self.share_copy(Copied::Link, cx),
             "n" => {
                 if let Some(remote) = &self.options.remote {
                     remote.share.new_code();
@@ -105,6 +153,22 @@ impl Shell {
         }
         cx.notify();
         true
+    }
+
+    /// Puts the code, or the link the QR says, on the clipboard.
+    pub(super) fn share_copy(&mut self, what: Copied, cx: &mut Context<Self>) {
+        let Some(info) = self.options.remote.as_ref().and_then(|r| r.share.pairing()) else {
+            return;
+        };
+        let text = match what {
+            Copied::Code => Some(info.code.clone()),
+            Copied::Link => pairing_link(&info.code, &settings::text(cx, "remote_relay_url")),
+        };
+        if let Some(text) = text {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            self.share_ui.copied = Some((what, Instant::now()));
+        }
+        cx.notify();
     }
 
     fn share_answer(&mut self, allow: bool, cx: &mut Context<Self>) {
@@ -178,6 +242,8 @@ impl Shell {
                 }
             }
         }
+        // A paired device that looks at the Den keeps it worked out.
+        self.den_serve(cx);
         if self.overlay == Overlay::Share {
             cx.notify();
         }
@@ -266,45 +332,124 @@ impl Shell {
             );
         }
         if on {
+            let button = |id: &'static str, label: String, accent: bool| {
+                mono(label)
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(metrics::RADIUS())
+                    .border_1()
+                    .border_color(if accent {
+                        colours.signal
+                    } else {
+                        colours.elevated_border
+                    })
+                    .cursor_pointer()
+            };
+            let new_code = button("share-new-code", "NEW CODE (N)".into(), false).on_click(
+                cx.listener(|this, _, _, cx| {
+                    if let Some(remote) = &this.options.remote {
+                        remote.share.new_code();
+                    }
+                    cx.notify();
+                }),
+            );
             body = body.child(match &pairing {
-                Some(info) => div()
+                Some(info) => {
+                    let link = pairing_link(&info.code, &url);
+                    let code_qr = link.as_deref().and_then(|link| self.share_ui.qr_of(link));
+                    let copied_code = self.share_ui.just_copied(Copied::Code);
+                    let copied_link = self.share_ui.just_copied(Copied::Link);
+                    div()
+                        .debug_selector(|| "share-code".into())
+                        .flex()
+                        .items_start()
+                        .gap(px(20.))
+                        .p(px(14.))
+                        .border_1()
+                        .border_color(colours.border)
+                        .bg(colours.surface_2)
+                        .children(code_qr.map(|code_qr| {
+                            div()
+                                .debug_selector(|| "share-qr".into())
+                                .relative()
+                                .flex_none()
+                                .p(px(6.))
+                                .children(lines::focus_ticks("share-qr", colours))
+                                .child(qr::tile(&code_qr, px(172.)))
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .child(section_label("Pairing code", colours))
+                                .child(
+                                    div()
+                                        .debug_selector(|| "share-code-text".into())
+                                        .font_family(crate::theme::fonts::mono())
+                                        .text_size(px(34.))
+                                        .child(info.code.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(led(colours.signal))
+                                        .child(mono(format!(
+                                            "EXPIRES IN {} · {} WRONG ATTEMPTS LEFT · WORKS ONCE",
+                                            countdown(info.remaining),
+                                            info.attempts_left
+                                        ))
+                                        .text_color(muted)),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_wrap()
+                                        .gap(px(8.))
+                                        .child(
+                                            button(
+                                                "share-copy-code",
+                                                if copied_code { "COPIED".into() } else { "COPY CODE (C)".into() },
+                                                true,
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.share_copy(Copied::Code, cx)
+                                            })),
+                                        )
+                                        .child(
+                                            button(
+                                                "share-copy-link",
+                                                if copied_link { "COPIED".into() } else { "COPY LINK (L)".into() },
+                                                false,
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.share_copy(Copied::Link, cx)
+                                            })),
+                                        )
+                                        .child(new_code),
+                                )
+                                .child(div().text_color(muted).child(
+                                    "On a phone: scan the code with the camera, or with Leon. On another computer: Connect a machine, then paste.",
+                                )),
+                        )
+                }
+                None => div()
                     .debug_selector(|| "share-code".into())
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
-                    .child(mono("PAIRING CODE").text_color(muted))
-                    .child(
-                        div()
-                            .font_family(crate::theme::fonts::mono())
-                            .text_size(px(34.))
-                            .child(info.code.clone()),
-                    )
-                    .child(div().text_color(muted).child(format!(
-                        "Works once. Expires in {}. {} wrong attempts allowed. On the other computer: Connect a machine, With a code.",
-                        countdown(info.remaining),
-                        info.attempts_left
-                    ))),
-                None => div()
-                    .debug_selector(|| "share-code".into())
-                    .text_color(muted)
-                    .child("The code was used, expired or burned by wrong attempts. Press N for a new one."),
+                    .items_start()
+                    .gap(px(8.))
+                    .child(div().text_color(muted).child(
+                        "The code was used, expired or burned by wrong attempts. Press N for a new one.",
+                    ))
+                    .child(new_code),
             });
-            body = body.child(
-                mono("NEW CODE (N)")
-                    .id("share-new-code")
-                    .debug_selector(|| "share-new-code".into())
-                    .px(px(10.))
-                    .py(px(4.))
-                    .border_1()
-                    .border_color(colours.elevated_border)
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(remote) = &this.options.remote {
-                            remote.share.new_code();
-                        }
-                        cx.notify();
-                    })),
-            );
         }
         let mut list = div()
             .debug_selector(|| "share-devices".into())
@@ -398,7 +543,7 @@ impl Shell {
                     .border_t_1()
                     .border_color(colours.border)
                     .child(
-                        mono("ENTER SWITCH · N NEW CODE · Y/N ANSWER · ESC CLOSE")
+                        mono("ENTER SWITCH · C COPY CODE · L COPY LINK · N NEW CODE · Y/N ANSWER · ESC CLOSE")
                             .text_color(muted),
                     ),
             )
@@ -440,6 +585,29 @@ mod tests {
         assert!(!ok);
         assert!(line.contains("wss://relay.getleon.dev") && line.contains("may not be live yet"));
         assert!(relay_line(&RelayState::Online, "wss://x").1);
+    }
+
+    #[test]
+    fn the_link_of_a_code_names_the_relay_and_reads_back() {
+        let link = pairing_link("ABCD-EFG-HJK", "wss://relay.getleon.dev").unwrap();
+        let read = leon_link::parse_text(&link).unwrap();
+        assert_eq!(read.code.display(), "ABCD-EFG-HJK");
+        assert_eq!(read.relay.as_deref(), Some("wss://relay.getleon.dev"));
+        assert_eq!(pairing_link("nonsense", "wss://x"), None);
+    }
+
+    #[test]
+    fn the_qr_is_kept_while_the_link_is_the_same() {
+        let ui = ShareUi::default();
+        let first = ui.qr_of("leon://pair?code=ABCD-EFG-HJK").unwrap();
+        assert!(Rc::ptr_eq(
+            &first,
+            &ui.qr_of("leon://pair?code=ABCD-EFG-HJK").unwrap()
+        ));
+        assert!(!Rc::ptr_eq(
+            &first,
+            &ui.qr_of("leon://pair?code=ABCD-EFG-HJM").unwrap()
+        ));
     }
 
     #[test]

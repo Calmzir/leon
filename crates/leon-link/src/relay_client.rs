@@ -29,7 +29,7 @@ use crate::pipe::{Pipe, PIPE_CAPACITY};
 
 /// How long connecting and the rendezvous may take.
 pub const DIAL_TIMEOUT: Duration = Duration::from_secs(12);
-/// How often a host pings the relay to keep proxies from idling it out.
+/// How often a peer pings the relay to keep proxies from idling it out.
 const KEEPALIVE: Duration = Duration::from_secs(20);
 /// The largest WebSocket message accepted from a relay.
 const MAX_WS_MESSAGE: usize = 2 * 1024 * 1024;
@@ -155,8 +155,17 @@ pub async fn dial(
     let (from_peer_tx, from_peer_rx) = mpsc::channel::<Vec<u8>>(PIPE_CAPACITY);
     tokio::spawn(async move {
         let (mut sink, mut stream) = socket.split();
+        // A pairing attempt is silent while the host's owner decides, which
+        // can outlast a proxy's idle limit; sessions ping on their own.
+        let mut keepalive = tokio::time::interval(KEEPALIVE);
+        keepalive.tick().await;
         loop {
             tokio::select! {
+                _ = keepalive.tick() => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                }
                 outgoing = to_peer_rx.recv() => match outgoing {
                     Some(bytes) => {
                         if sink.send(Message::Binary(encode_client_data(&bytes).into())).await.is_err() {

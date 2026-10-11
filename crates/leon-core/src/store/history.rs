@@ -96,6 +96,24 @@ impl Store {
         })
     }
 
+    /// The sessions pinned on a machine, in the order of its Pinned section.
+    pub fn pinned_sessions(&self, machine: &MachineId, limit: usize) -> Result<Vec<Session>> {
+        self.read(|connection| {
+            let mut statement = connection.prepare_cached(&format!(
+                "SELECT {SESSION_COLUMNS} FROM session s
+                 WHERE s.machine_id = ?1 AND s.sort_order IS NOT NULL
+                 ORDER BY s.sort_order, s.updated_at DESC, s.pk DESC
+                 LIMIT ?2"
+            ))?;
+            let sessions = statement
+                .query_map(params![machine.as_str(), sql_limit(limit)], |row| {
+                    session_from_row(row, 0)
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            Ok(sessions)
+        })
+    }
+
     /// The history session an agent's own id names on a machine, if it was
     /// imported.
     pub fn session_by_external(

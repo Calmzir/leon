@@ -1,0 +1,40 @@
+[package]
+name = "leon-mobile"
+description = "Leon for phones: pairing, the encrypted session and agent turns behind one small API, exported to Swift, Kotlin and React Native with UniFFI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+# `lib` for the tests and the workspace, `staticlib` for iOS, `cdylib` for
+# Android and for generating the bindings from a desktop build.
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+leon-link.workspace = true
+leon-wire.workspace = true
+# The desktop's own detection of a project's logo, run through the session
+# (see `src/logo.rs`). `leon-core` brings its bundled SQLite along, unused here.
+leon-core.workspace = true
+leon-remote.workspace = true
+base64 = "0.22"
+
+# With `preserve_order`: the arguments of a tool are shown in the order the
+# agent wrote them, and the same whether this crate is built alone (for the
+# phone) or with the workspace, where the desktop's dependencies turn it on.
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+# The version uniffi-bindgen-react-native 0.31 generates bindings for; the two
+# move together (see mobile/modules/leon-link-native).
+uniffi = "0.31"
+
+[dev-dependencies]
+# The in-process relay: for the tests and for `--example dev-relay`. A
+# dev-dependency, so its feature never reaches the library a phone loads.
+leon-link = { workspace = true, features = ["test-support"] }
+leon-host.workspace = true
+tempfile.workspace = true

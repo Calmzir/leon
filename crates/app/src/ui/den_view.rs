@@ -468,6 +468,37 @@ impl Shell {
         matches!(self.main, Main::Den)
     }
 
+    /// Whether a paired device is looking at the Den: it asked for it a
+    /// moment ago ([`crate::share::DEN_KEPT_FOR`]).
+    pub(super) fn den_shared(&self) -> bool {
+        self.options.remote.as_ref().is_some_and(|remote| {
+            remote
+                .share
+                .den_board()
+                .asked_within(crate::share::DEN_KEPT_FOR)
+        })
+    }
+
+    /// Whether the transcripts are to be read now: the Den is open here, a
+    /// message waits for a session, or a paired device looks at the Den.
+    fn den_watched(&self) -> bool {
+        self.den_open() || self.den.post.busy() || self.den_shared()
+    }
+
+    /// Goes on working the Den out for a paired device that looks at it
+    /// while it is closed here. Called every second while sharing is on.
+    pub(super) fn den_serve(&mut self, cx: &mut Context<Self>) {
+        if !self.den_shared() {
+            return;
+        }
+        self.den_watch(cx);
+        if self.den.watch.is_none() {
+            // Nobody to follow: the den is still told as it is (empty, or
+            // the sessions without a transcript).
+            self.den_refresh(false, cx);
+        }
+    }
+
     fn den_style(&self, cx: &gpui_kit::App) -> DenStyle {
         let colours = crate::theme::palette(cx);
         DenStyle {
@@ -667,7 +698,7 @@ impl Shell {
     /// The transcripts stop being read as the Den is left, unless a message
     /// still waits for a session: then they are read until it was typed.
     fn den_stop_watching(&mut self) {
-        if !self.den.post.busy() {
+        if !self.den.post.busy() && !self.den_shared() {
             self.den.watch = None;
         }
     }
@@ -1995,7 +2026,7 @@ impl Shell {
     /// Starts the loop that reads the transcripts, if the Den is open, a
     /// session is live and it does not run already.
     pub(super) fn den_watch(&mut self, cx: &mut Context<Self>) {
-        if !(self.den_open() || self.den.post.busy())
+        if !self.den_watched()
             || self.den.watch.is_some()
             || (self.live.all().is_empty() && self.den_away(cx).is_empty())
         {
@@ -2010,15 +2041,14 @@ impl Shell {
         self.den.watch = Some(cx.spawn(async move |this, cx| loop {
             let Ok(Some(wanted)) = this.read_with(cx, |this, cx| {
                 let wanted = this.den_wanted_all(cx);
-                ((this.den_open() || this.den.post.busy())
-                    && !(this.live.all().is_empty() && wanted.is_empty()))
-                .then_some(wanted)
+                (this.den_watched() && !(this.live.all().is_empty() && wanted.is_empty()))
+                    .then_some(wanted)
             }) else {
                 // Closed, or nobody left: the loop ends and with it the task.
                 // Whoever was last in the den is seen to leave.
                 this.update(cx, |this, cx| {
                     this.den.watch = None;
-                    if this.den_open() {
+                    if this.den_open() || this.den_shared() {
                         this.den_refresh(true, cx);
                     }
                 })
@@ -2167,11 +2197,14 @@ impl Shell {
     /// Tells the view who is in the den now. With `narrate`, what changed
     /// since the last time is told to the narrator.
     pub(super) fn den_refresh(&mut self, narrate: bool, cx: &mut Context<Self>) {
-        let Some(view) = self.den.view.clone() else {
+        // Without a view (the Den was never opened here) the lions are still
+        // worked out: a paired device may be looking at them.
+        let view = self.den.view.clone();
+        if view.is_none() && !self.den_shared() {
             return;
-        };
-        let drawn = view.read(cx).drawn();
-        if self.den.drawn.as_ref() != Some(&drawn) {
+        }
+        let drawn = view.as_ref().map(|view| view.read(cx).drawn());
+        if let Some(drawn) = drawn.filter(|drawn| self.den.drawn.as_ref() != Some(drawn)) {
             match &drawn {
                 leon_den::Drawn::Failed(why) => {
                     tracing::warn!(%why, "the Den shows the pixel art: 2.5D cannot be drawn");
@@ -2248,6 +2281,11 @@ impl Shell {
                 ],
             ));
         }
+        self.den_publish(&cubs, cx);
+        let Some(view) = view else {
+            self.den.cubs = cubs;
+            return;
+        };
         let told = if narrate {
             den::changes(
                 &self.den.cubs,
@@ -2297,6 +2335,62 @@ impl Shell {
             }
         });
         self.den.cubs = cubs;
+    }
+
+    /// Puts the den where paired devices read it, each lion with what names
+    /// its session in the history, so that a device can open it.
+    fn den_publish(&self, cubs: &[Cub], cx: &gpui_kit::App) {
+        let Some(remote) = &self.options.remote else {
+            return;
+        };
+        if !self.den_shared() {
+            return;
+        }
+        // Whose session a lion is: (agent, the agent's id of it, its folder).
+        let mut whose: HashMap<u64, (String, Option<String>, String)> = HashMap::new();
+        for session in self.live.all() {
+            let Some(agent) = session.shown_agent() else {
+                continue;
+            };
+            let external = session
+                .learned
+                .as_ref()
+                .map(|(id, _)| id.clone())
+                .or_else(|| session.resumed.clone());
+            whose.insert(
+                session.id.0,
+                (agent.as_str().to_owned(), external, session.cwd.clone()),
+            );
+        }
+        for away in self.den_away(cx) {
+            whose.insert(
+                away.id,
+                (
+                    away.agent.as_str().to_owned(),
+                    Some(away.external),
+                    away.cwd,
+                ),
+            );
+        }
+        let shared = cubs
+            .iter()
+            .map(|cub| {
+                let own = whose.get(&cub.id);
+                leon_wire::SharedCub {
+                    id: cub.id,
+                    name: cub.name.clone(),
+                    agent: own.map(|(agent, ..)| agent.clone()).unwrap_or_default(),
+                    state: den::state_tag(cub.state).to_owned(),
+                    detail: cub.detail.clone(),
+                    level: cub.level,
+                    parent: cub.parent,
+                    mystery: cub.mystery,
+                    external_id: own.and_then(|(_, external, _)| external.clone()),
+                    cwd: own.map(|(.., cwd)| cwd.clone()),
+                }
+            })
+            .collect();
+        remote.share.den_board().publish(shared);
     }
 
     /// The heading of the main pane while the Den is open.

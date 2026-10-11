@@ -47,6 +47,21 @@ For Leon hosts it adds a third, opt-out-free but read-only primitive:
   empty result. The client imports it as that machine's own state, so this
   machine's section of the client's sidebar mirrors the host's one: the same
   projects, the same history, resumable there.
+  The answer also carries the sessions pinned on that computer, in the order
+  of its Pinned section, as a field added at the end of the message: a peer
+  that does not know it stops reading before it, and an answer that ends
+  before it reads as no pins, so an older Leon on either side keeps working.
+  After the pins, in the same way, it says whether this host has a Den.
+* **who is in its Den** (`ShareDen`): the live agent sessions of that
+  computer and their sub-agents, each with what it is doing as the host's own
+  Den says it (a state tag and the plain fact: the file it edits, the command
+  as typed) and, where known, the `(agent, external_id)` of its session. The
+  Den is the window's, which alone sees the terminals: the answer is what the
+  window last worked out, and that a device asked is what keeps it worked out
+  for the next twenty seconds while the Den is closed on that computer. So
+  the first answer after a while may hold nobody. The message is new, and a
+  peer that does not know a message drops the connection: it is only sent to
+  a host whose `ShareState` answer said it has a Den.
 
 Everything above those (git, probing, agents) is unchanged: a relay machine is
 just another machine.
@@ -200,6 +215,24 @@ client                                                      host
 * The relay learns the room and that a pairing happened; the host may refuse
   (`Approval`): headless hosts treat the code as the approval.
 
+#### The code as a link
+
+"Share this machine" also shows the code as a QR and copies it as a link:
+
+```
+leon://pair?code=ABCD-EFG-HJK&relay=wss%3A%2F%2Frelay.getleon.dev
+```
+
+`code` is the pairing code as shown; `relay` (optional, percent-encoded) is the
+relay the showing computer listens on, so the other side does not have to be
+configured to match. The link carries the secret part of the code, exactly as
+the screen does, and is worth nothing once the code is used or expired. It is
+a custom scheme on purpose: opening it never reaches a web server. A phone's
+camera opens it in the Leon app, which fills the form and waits for the person
+to connect; the desktop's "Connect a machine" reads it from the clipboard
+(Paste). A relay named by a link is used for that machine only, and said on
+the screen.
+
 ### Sessions
 
 `Noise_IK_25519_ChaChaPoly_BLAKE2s` (prologue `leon/1/session`). The client knows
@@ -222,9 +255,23 @@ bounded and decoding never panics (fuzz-style and truncation tests).
 The version byte of every frame is the protocol version, and `Hello` / `Welcome`
 carry it too. It is **2** since `Exec` can carry standard input (the `stdin` field
 of its command, a change to the message layout that `postcard` cannot read around).
-A peer speaking 1.x and one speaking 2.x refuse each other at the version check:
-the frame is rejected and the connection closes, and the client reports a version
-mismatch instead of misreading messages. Update both ends together.
+A host speaks its own version only: it rejects a frame of any other and closes
+without answering, since it could not write an answer the other side would read.
+
+A client speaks every version from 1 up to its own, so a newer Leon (or the phone
+app) still reaches a computer that has not been updated. It greets in its newest
+version first; when the host accepts the handshake and then closes without a word,
+the client tries the next older version on a new connection, and remembers the one
+that worked for later reconnections. A request the host's version cannot express
+(standard input, to a 1.x host) fails by itself and the connection stays. When no
+version works the client reports a version mismatch and asks to update one side.
+A device the host does not accept is refused earlier, at the handshake, and is
+never retried in another version.
+
+The version is chosen inside the authenticated, encrypted session and only selects
+the layout of two messages. A relay cannot read or change it; the most it can do is
+cut connections so that the client ends on "version mismatch", which is the same
+denial of service it always had.
 
 ## Cryptography and dependencies
 
@@ -241,6 +288,8 @@ No home-made cryptography: Leon composes audited crates.
 | `sha2` | 0.10 | host and device ids | MIT OR Apache-2.0 |
 | `postcard` | 1 | message encoding | MIT OR Apache-2.0 |
 | `tokio-tungstenite` | 0.30 | the WebSocket transport (rustls, native roots) | MIT |
+| `rustls-native-certs` | 0.8 | the system's root certificates, on a desktop | Apache-2.0 OR ISC OR MIT |
+| `webpki-roots` | 1 | Mozilla's root certificates, on iOS and Android only | CDLA-Permissive-2.0 |
 
 ## Limits and defaults
 

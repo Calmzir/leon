@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Leon",
+    "slug": "leon",
+    "version": "0.9.0",
+    "scheme": "leon",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "backgroundColor": "#0A0A0A",
+    "ios": {
+      "bundleIdentifier": "dev.zavu.leon",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "Leon connects to a relay on your own network when you pair with one."
+      }
+    },
+    "android": {
+      "package": "dev.zavu.leon",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "monochromeImage": "./assets/adaptive-monochrome.png",
+        "backgroundColor": "#0A0A0A"
+      },
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-mark.png",
+          "imageWidth": 96,
+          "backgroundColor": "#0A0A0A"
+        }
+      ],
+      "expo-status-bar",
+      "expo-sqlite",
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Leon uses the camera to scan the pairing code shown on your computer.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6e57f647-b20c-449e-b798-af94712d74e0"
+      }
+    },
+    "owner": "zavudev"
+  }
+}

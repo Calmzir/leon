@@ -24,7 +24,7 @@ use leon_remote::RelayHub;
 use leon_wire::relay::RelayErrorCode;
 
 /// The two sentences at the top of "With a code".
-pub const WHAT_IT_IS: &str = "On the other computer, open Leon and choose Share this machine: it shows a short code. Type it here and the two computers connect through a relay, with nothing to open or set up on either network.";
+pub const WHAT_IT_IS: &str = "On the other computer, open Leon and choose Share this machine: it shows a short code. Type or paste it here and the two computers connect through a relay, with nothing to open or set up on either network.";
 /// The sentence about privacy.
 pub const HOW_IT_IS_SAFE: &str = "The connection is end-to-end encrypted with keys only the two computers hold, so the relay only passes along bytes it cannot read.";
 

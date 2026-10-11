@@ -31,11 +31,15 @@ pub mod id;
 pub mod message;
 pub mod relay;
 
-pub use frame::{decode_frame, encode_frame, FrameDecoder, FrameError, HEADER_LEN, MAX_FRAME_LEN};
+pub use frame::{
+    decode_frame, decode_frame_as, encode_frame, encode_frame_for, FrameDecoder, FrameError,
+    HEADER_LEN, MAX_FRAME_LEN,
+};
 pub use id::{base32, HostId, IdError};
 pub use message::{
-    ErrorCode, ExecOutput, ExecSpec, Exit, Grid, Message, PtyInfo, SharedEntry, SharedProject,
-    SharedSession, SharedTranscript, SpawnSpec, WireError, MAX_EXEC_INPUT, MAX_EXEC_OUTPUT,
-    MAX_PTY_CHUNK, PROTOCOL_VERSION, REPLAY_BUFFER_BYTES, SHARE_SESSIONS_LIMIT,
+    ErrorCode, ExecOutput, ExecSpec, Exit, Grid, Message, PtyInfo, SharedCub, SharedEntry,
+    SharedProject, SharedSession, SharedTranscript, SpawnSpec, WireError, MAX_EXEC_INPUT,
+    MAX_EXEC_OUTPUT, MAX_PTY_CHUNK, MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION, REPLAY_BUFFER_BYTES,
+    SHARE_DEN_LIMIT, SHARE_PINNED_LIMIT, SHARE_SESSIONS_LIMIT,
 };
 pub use relay::{RelayError, RelayErrorCode, RelayLimits};

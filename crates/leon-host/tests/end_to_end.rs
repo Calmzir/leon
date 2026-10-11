@@ -549,6 +549,36 @@ impl ShareSource for FakeShare {
         self.sessions.clone()
     }
 
+    fn den(&self) -> Option<Vec<leon_wire::SharedCub>> {
+        Some(
+            (0..leon_wire::SHARE_DEN_LIMIT as u64 + 2)
+                .map(|id| leon_wire::SharedCub {
+                    id,
+                    name: format!("lion {id}"),
+                    agent: "claude".into(),
+                    state: "editing".into(),
+                    detail: Some("Editing shell.rs".into()),
+                    level: 3,
+                    parent: None,
+                    mystery: false,
+                    external_id: Some(format!("a{id}")),
+                    cwd: Some("/srv/code".into()),
+                })
+                .collect(),
+        )
+    }
+
+    fn has_den(&self) -> bool {
+        true
+    }
+
+    fn pinned(&self) -> Vec<SharedSession> {
+        // More than a host hands over, and older than everything it lists.
+        (0..leon_wire::SHARE_PINNED_LIMIT + 3)
+            .map(|n| session_of("codex", &format!("p{n}")))
+            .collect()
+    }
+
     fn transcript(&self, agent: &str, external_id: &str) -> Option<SharedTranscript> {
         match (agent, external_id) {
             ("claude", "a1") => Some(SharedTranscript {
@@ -621,7 +651,13 @@ async fn a_paired_client_sees_what_the_host_shares_of_itself() {
     let client = client_for(&url, &host_identity, &me);
     client.wait_online(WAIT).await.unwrap();
 
-    let (projects, sessions, truncated) = client.share_state().await.unwrap();
+    let leon_link::client::Shared {
+        projects,
+        sessions,
+        truncated,
+        pinned,
+        den,
+    } = client.share_state().await.unwrap();
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].root, "/srv/api");
     assert!(client
@@ -633,6 +669,15 @@ async fn a_paired_client_sees_what_the_host_shares_of_itself() {
     assert_eq!(sessions.len(), SHARE_SESSIONS_LIMIT);
     assert!(truncated);
     assert_eq!(sessions[0].external_id, "a0");
+    // The pins in the source's order, cut at their own limit.
+    assert_eq!(pinned.len(), leon_wire::SHARE_PINNED_LIMIT);
+    assert_eq!(pinned[0].external_id, "p0");
+    assert_eq!(pinned[1].agent, "codex");
+    // It says it has a Den, and answers with it, cut at its limit.
+    assert!(den);
+    let cubs = client.share_den().await.unwrap();
+    assert_eq!(cubs.len(), leon_wire::SHARE_DEN_LIMIT);
+    assert_eq!((cubs[0].id, cubs[0].state.as_str()), (0, "editing"));
     let transcript = client
         .share_transcript("claude", "a1")
         .await
@@ -647,8 +692,8 @@ async fn a_paired_client_sees_what_the_host_shares_of_itself() {
 #[tokio::test]
 async fn a_host_that_shares_nothing_answers_the_share_requests_with_nothing() {
     let world = paired().await;
-    let (projects, sessions, truncated) = world.client.share_state().await.unwrap();
-    assert!(projects.is_empty() && sessions.is_empty() && !truncated);
+    let shared = world.client.share_state().await.unwrap();
+    assert_eq!(shared, leon_link::client::Shared::default());
     assert!(world
         .client
         .share_transcript("claude", "a1")
