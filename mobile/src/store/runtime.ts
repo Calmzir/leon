@@ -24,6 +24,7 @@ import {
   refreshRows,
   transcriptRows,
 } from '@/chat/transcript';
+import { createDemoLink, DEMO_HOST, isDemo } from '@/link/demo';
 import { explain } from '@/link/errors';
 import {
   LinkError,
@@ -120,11 +121,12 @@ export function ensureLink(hostId: string): HostLink | undefined {
     // The listener outlives a forgotten computer: the token tells it so.
     const token = {};
     tokens.set(hostId, token);
-    const opened = link().connect(host, (state) => {
+    const onState = (state: ConnState) => {
       if (tokens.get(hostId) !== token) return;
       setConn(hostId, state);
       if (state.kind === 'online') void whenOnline(hostId);
-    });
+    };
+    const opened = isDemo(hostId) ? createDemoLink(onState) : link().connect(host, onState);
     links.set(hostId, opened);
     return opened;
   } catch (error) {
@@ -136,6 +138,13 @@ export function ensureLink(hostId: string): HostLink | undefined {
     });
     return undefined;
   }
+}
+
+/** Adds the demo computer, which needs no Leon to connect to; returns its id. */
+export function addDemo(): string {
+  useApp.getState().addHost(DEMO_HOST);
+  ensureLink(DEMO_HOST.hostId);
+  return DEMO_HOST.hostId;
 }
 
 /** Opens every connection: the list of computers shows who is reachable. */

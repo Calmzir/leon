@@ -10,7 +10,7 @@ import { isLoopback, parsePairing } from '@/link/pairing';
 import type { CodeCheck } from '@/link/types';
 import { tap } from '@/store/alerts';
 import { useApp } from '@/store/app';
-import { ensureLink, forgetHost, link, staleTwins } from '@/store/runtime';
+import { addDemo, ensureLink, forgetHost, link, staleTwins } from '@/store/runtime';
 import { Button, Callout, Field, Label, Panel, Screen, Section, Txt } from '@/ui/kit';
 import { Mark } from '@/ui/Mark';
 
@@ -210,6 +210,16 @@ export default function Pair() {
             busy={busy}
             disabled={check.kind !== 'complete'}
             onPress={() => void pair()}
+          />
+
+          <Button
+            kind="outline"
+            title="No computer at hand? Try a demo"
+            icon="play"
+            disabled={busy}
+            onPress={() =>
+              router.replace({ pathname: '/host/[hostId]', params: { hostId: addDemo() } })
+            }
           />
 
           <Section title="This device" style={{ paddingHorizontal: 0, paddingBottom: 0 }} />

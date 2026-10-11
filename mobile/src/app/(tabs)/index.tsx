@@ -9,7 +9,7 @@ import type { ChatRecord, ChatRow } from '@/chat/list';
 
 import { connectionWord } from '@/link/errors';
 import { useApp, type HostRecord } from '@/store/app';
-import { askDens, forgetHost, useRuntime } from '@/store/runtime';
+import { addDemo, askDens, forgetHost, useRuntime } from '@/store/runtime';
 import { useTheme } from '@/theme/useTheme';
 import { connectionColor } from '@/ui/ConnectionBanner';
 import { Button, Label, Led, Row, Rule, Screen, Section, Signature, Txt } from '@/ui/kit';
@@ -202,6 +202,14 @@ export default function Hosts() {
             icon="link"
             onPress={() => router.push('/pair')}
             style={{ marginTop: 10 }}
+          />
+          <Button
+            title="Try a demo"
+            icon="play"
+            accessibilityHint="Adds a made-up computer, to see how the app works before connecting yours"
+            onPress={() =>
+              router.push({ pathname: '/host/[hostId]', params: { hostId: addDemo() } })
+            }
           />
         </View>
         <Signature style={{ paddingBottom: 14 }} />
