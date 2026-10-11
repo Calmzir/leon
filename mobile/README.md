@@ -97,10 +97,9 @@ bunx eas-cli build --profile development --platform android
 bunx eas-cli build --profile development --platform ios
 ```
 
-Before the first build, change the placeholders in `app.json`:
-`ios.bundleIdentifier` and `android.package` are both `dev.getleon.mobile`,
-chosen without registering anything. An iOS build for devices needs an Apple
-Developer account.
+`ios.bundleIdentifier` and `android.package` are both `zavudev.leon`: Leon is
+Zavu's. An iOS build for devices needs an Apple Developer account that owns
+that identifier.
 
 ## Checks
 
