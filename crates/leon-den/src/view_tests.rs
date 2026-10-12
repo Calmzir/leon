@@ -434,6 +434,98 @@ fn typing_in_the_feed_composites_no_new_picture_of_the_room(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn the_wheel_zooms_the_room_in_two_and_a_half_d_and_a_drag_of_the_floor_moves_it(
+    cx: &mut TestAppContext,
+) {
+    use crate::view::Drawn;
+    let (shown, cx) = show(cx);
+    feed(&shown, cx, &[(1, "moss", CubState::WaitingForUser)]);
+    let zoom = |cx: &mut VisualTestContext| shown.view.read_with(cx, |view, _| view.zoom());
+    let wheel = |cx: &mut VisualTestContext, at, lines: f32| {
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: at,
+            delta: gpui_kit::ScrollDelta::Lines(point(0., lines)),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+    };
+    // The pixel art is the whole room, whatever the wheel and the keys say.
+    let room = shown
+        .view
+        .update(cx, |view, _| view.window_point(40, 60).unwrap());
+    wheel(cx, room, 4.);
+    assert_eq!(zoom(cx), 1.);
+    assert!(!shown.view.update(cx, |view, cx| view.zoom_by(2, cx)));
+
+    shown.view.update(cx, |view, cx| view.set_three_d(true, cx));
+    cx.run_until_parked();
+    if !matches!(
+        shown.view.read_with(cx, |view, _| view.drawn()),
+        Drawn::Iso(_)
+    ) {
+        // No GPU here: there is no room in 2.5D to zoom.
+        return;
+    }
+    // A point of the floor, and where it is in the window.
+    let spot = |cx: &mut VisualTestContext| {
+        shown
+            .view
+            .update(cx, |view, _| view.window_point(40, 60).unwrap())
+    };
+    let before = spot(cx);
+    let (_, pictures, _) = shown.view.read_with(cx, |view, _| view.cost());
+    wheel(cx, before, 4.);
+    assert!(zoom(cx) > 1.5, "the wheel up zooms in");
+    let (_, after, _) = shown.view.read_with(cx, |view, _| view.cost());
+    assert!(after > pictures, "the room nearer is another picture");
+    // What was under the pointer still is.
+    let held = spot(cx);
+    assert!(
+        (held.x - before.x).abs() < px(1.5) && (held.y - before.y).abs() < px(1.5),
+        "{before:?} went to {held:?}"
+    );
+
+    // A drag of the floor moves the room with the pointer, and selects
+    // nobody else on the way.
+    shown.view.update(cx, |view, cx| view.select(Some(1), cx));
+    let floor = shown
+        .view
+        .update(cx, |view, _| view.window_point(120, 120).unwrap());
+    let to = point(floor.x - px(30.), floor.y - px(20.));
+    cx.simulate_mouse_down(floor, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::default());
+    cx.run_until_parked();
+    let moved = shown
+        .view
+        .update(cx, |view, _| view.window_point(120, 120).unwrap());
+    assert!(
+        (moved.x - to.x).abs() < px(1.5) && (moved.y - to.y).abs() < px(1.5),
+        "{floor:?} went to {moved:?}, not {to:?}"
+    );
+    assert_eq!(shown.view.read_with(cx, |view, _| view.selected()), Some(1));
+    // A click on the floor that moves nothing selects nobody.
+    cx.simulate_click(to, Modifiers::default());
+    cx.run_until_parked();
+    assert_eq!(shown.view.read_with(cx, |view, _| view.selected()), None);
+
+    // The keys of the host, and the whole room again.
+    let near = zoom(cx);
+    assert!(shown.view.update(cx, |view, cx| view.zoom_by(-1, cx)));
+    assert!(zoom(cx) < near);
+    assert!(shown.view.update(cx, |view, cx| view.zoom_by(100, cx)));
+    assert!(!shown.view.update(cx, |view, cx| view.zoom_by(1, cx)));
+    assert!(shown.view.update(cx, |view, cx| view.zoom_fit(cx)));
+    cx.run_until_parked();
+    assert_eq!(zoom(cx), 1.);
+    let back = spot(cx);
+    assert!((back.x - before.x).abs() < px(0.5) && (back.y - before.y).abs() < px(0.5));
+    // The wheel down from the whole room changes nothing.
+    wheel(cx, back, -6.);
+    assert_eq!(zoom(cx), 1.);
+}
+
+#[gpui_kit::test]
 fn the_pixel_art_is_the_picture_until_two_and_a_half_d_is_asked_for_and_whenever_it_cannot_be_drawn(
     cx: &mut TestAppContext,
 ) {
