@@ -60,9 +60,9 @@ switching to one never restarts it.
   next keeper. Two windows of one data directory leave each other's sessions
   alone. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#durable-local-sessions).
 * **One interface for every agent (beta)**: with the setting *Agent interface*
-  on *Leon's own*, a session of Claude Code, Codex or opencode on this
-  computer is a conversation drawn by Leon instead of the agent's program in a
-  terminal: the same messages, the same folded steps, the same permission
+  on *Leon's own*, a session of Claude Code, Codex or opencode is a
+  conversation drawn by Leon instead of the agent's program in a terminal, on
+  this computer, over SSH and on a paired computer: the same messages, the same folded steps, the same permission
   questions and the same keys whatever the agent is. In its field `/` lists
   the agent's own commands and skills, `@` names a file, and the mode, the
   model and how hard it thinks are chosen from a list. **Dictate** writes

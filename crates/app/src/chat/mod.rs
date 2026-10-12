@@ -10,7 +10,9 @@
 //!   protocol's events;
 //! * [`complete`]: what the field offers while a command, a file, a mode or
 //!   a model is being named;
-//! * [`turn`]: one turn on a pipe, the agent's process and its protocol.
+//! * [`turn`]: one turn on a pipe, the agent's process and its protocol;
+//! * [`reach`]: that process on the machine it belongs to, this computer or
+//!   another one.
 //!
 //! The window's side is `ui/chat.rs` (what the shell does) and
 //! `ui/chat_view.rs` (what it draws). The setting `agent_interface` chooses
@@ -18,6 +20,7 @@
 
 pub mod complete;
 pub mod model;
+pub mod reach;
 pub mod turn;
 
 use leon_core::AgentId;

@@ -24,18 +24,22 @@
 //! alike in it. Adding an agent is one [`Adapter`] in [`agents`].
 //!
 //! The crate is pure: lines in, events and lines out. It starts no process
-//! and knows no transport. The desktop application runs the agent on a pipe
-//! (`crates/app/src/chat`); the phone's library runs it in a terminal of the
-//! paired computer behind its bridge (`leon-mobile`).
+//! and knows no transport. The desktop application runs the agent on a pipe,
+//! here or through `ssh` (`crates/app/src/chat`); a paired computer offers
+//! terminals and no pipes, so there the phone's library (`leon-mobile`) and
+//! the desktop both run it in a terminal behind the [`bridge`].
 //!
 //! * [`agents`]: the catalogue, and the [`AgentSession`] an adapter makes;
 //! * [`claude`], [`codex`], [`opencode`]: each agent's own protocol;
+//! * [`bridge`]: an agent behind a terminal instead of a pipe: the script
+//!   between them, the frames written to it and the marks it answers with;
 //! * [`events`]: the events, the questions and the answers, and [`Lines`],
 //!   which cuts a stream of bytes into clean lines;
 //! * [`shell`]: the login shell an agent's command is started through;
 //! * [`tag`]: the names messages are acknowledged by.
 
 pub mod agents;
+pub mod bridge;
 pub mod claude;
 pub mod codex;
 pub mod error;

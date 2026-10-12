@@ -1479,8 +1479,26 @@ resumes the agent's own conversation by the id it gave it (`TurnSpec::resume`),
 so the agent's history holds one session and the importer finds it as ever.
 What is written while a turn runs goes to the agent where it takes more
 (Claude Code queues it, Codex steers with it) and waits to be the next turn
-where it does not (opencode). `Spawner` starts the process: `Piped` is the real
-one, and the tests put a scripted one in its place.
+where it does not (opencode). `Spawner` starts the process, and the tests put a
+scripted one in its place.
+
+**On the machine of the session.** A `Start` names its machine, and
+`chat::reach::Reach`, the application's `Spawner`, starts the process there;
+the conversation above it is the same. On this computer it is `Piped`, a child
+on a pipe. Over SSH it is the same child, which is `ssh` running the command in
+the login shell of the other machine (`leon_remote::run_on`, so no terminal is
+asked for and the shared connection is used): `ssh` hands its input and output
+to the agent, and a connection that drops ends the turn, which the next prompt
+continues. Through a relay there are no pipes, only terminals, so the turn runs
+in a terminal of the paired computer behind the bridge the phone uses
+(`leon_turn::bridge`: a script that takes messages as numbered frames, passes
+each on once and acknowledges it in the terminal's output). `reach::Link` is the
+pure half: nothing is written before the bridge reads, one message is on its
+way at a time, one nobody acknowledged is written again, and a dropped
+connection holds everything until the client has re-attached. Ending a turn
+hangs its terminal up. What the agent is told through its environment on
+another machine is only the account's, with that machine's home folder; the
+files `@` lists and what the agent offers are asked of that machine.
 
 **One conversation.** `chat::model::Conversation::apply` reduces the events to
 a list of items (the person's words, the agent's Markdown, thoughts, tools with
@@ -1577,8 +1595,9 @@ While a list is open, `chat_key` gives it the arrows, `Ctrl+N`/`Ctrl+P`,
 where the person types. `leon-mobile` gets the same adapters and drops the
 commands at its boundary, which keeps its generated bindings as they were.
 
-**Not built yet**: conversations on SSH and relay machines (they start in a
-terminal), images attached to a prompt, dictation with the recogniser a
+**Not built yet**: taking up again a turn that still runs on a paired computer
+after the application was closed (the phone does; here closing ends it), a turn
+over SSH that outlives its connection, images attached to a prompt, dictation with the recogniser a
 system already has (macOS, Windows) and text that appears while the person
 still speaks (it is written when the microphone closes),
 Codex's and opencode's commands that are not in their protocol (the ones their

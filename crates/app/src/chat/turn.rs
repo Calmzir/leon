@@ -17,6 +17,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::{Arc, Mutex};
 
+use leon_core::Machine;
 use leon_turn::{
     object_on, Action, Adapter, AgentCommand, AgentSession, Lines, Outgoing, Step, TurnError,
     TurnEvent, TurnSpec,
@@ -25,9 +26,11 @@ use leon_turn::{
 /// What to start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Start {
+    /// The machine to start it on.
+    pub machine: Machine,
     /// The argument vector, program first.
     pub argv: Vec<String>,
-    /// The folder to start it in.
+    /// The folder to start it in, on that machine.
     pub cwd: String,
     /// Variables added to its environment.
     pub env: Vec<(String, String)>,
@@ -230,10 +233,18 @@ impl Spawner for Piped {
     fn spawn(&self, start: Start) -> io::Result<(Box<dyn Transport>, flume::Receiver<Output>)> {
         let mut argv = leon_turn::shell::login_argv(start.argv).into_iter();
         let mut command = leon_remote::spawn::std_child(argv.next().unwrap_or_default());
+        command.args(argv).current_dir(&start.cwd).envs(start.env);
+        piped(command)
+    }
+}
+
+/// Starts `command` with its three streams piped: the way to it, and what
+/// it says line by line until it has exited.
+pub(super) fn piped(
+    mut command: std::process::Command,
+) -> io::Result<(Box<dyn Transport>, flume::Receiver<Output>)> {
+    {
         command
-            .args(argv)
-            .current_dir(&start.cwd)
-            .envs(start.env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -366,8 +377,17 @@ mod tests {
     use super::testing::Scripted;
     use super::*;
 
+    fn here() -> Machine {
+        Machine {
+            id: leon_core::MachineId::local(),
+            name: "This computer".into(),
+            kind: leon_core::MachineKind::Local,
+        }
+    }
+
     fn start() -> Start {
         Start {
+            machine: here(),
             argv: vec!["claude".into()],
             cwd: "/work".into(),
             env: Vec::new(),
@@ -467,6 +487,7 @@ mod tests {
     fn a_piped_process_is_read_line_by_line_until_it_ends() {
         let (mut transport, output) = Piped
             .spawn(Start {
+                machine: here(),
                 argv: vec![
                     "/bin/sh".into(),
                     "-c".into(),

@@ -688,7 +688,7 @@ const BASE: &[Def] = &[
             "agent_interface",
             S::Agents,
             "Agent interface",
-            "Where a session of Claude Code, Codex or opencode runs: in a terminal, with the agent's own program, or in Leon's own interface, a conversation that looks and works the same for every agent. Leon's own is in beta: sessions on this computer only, and an agent it cannot drive starts in a terminal as before. Takes effect for sessions started after it is changed.",
+            "Where a session of Claude Code, Codex or opencode runs: in a terminal, with the agent's own program, or in Leon's own interface, a conversation that looks and works the same for every agent. Leon's own is in beta. It works on every machine: this computer, one reached over SSH and a paired computer. An agent it cannot drive starts in a terminal as before. Takes effect for sessions started after it is changed.",
             "chat conversation unified native interface beta protocol terminal tui messages permissions",
             K::Choice(INTERFACES),
             D::Text("terminal"),

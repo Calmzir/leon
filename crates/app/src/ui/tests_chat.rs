@@ -138,6 +138,57 @@ fn with_the_setting_an_agent_starts_as_a_conversation_and_not_in_a_terminal(
     assert!(turns(&h).is_empty(), "nothing is started before a prompt");
 }
 
+/// The machine of a conversation is where its turn is started: the same
+/// conversation, with the other machine's folder and none of this
+/// computer's own variables.
+#[gpui_kit::test]
+fn a_session_on_another_machine_is_a_conversation_whose_turn_starts_there(cx: &mut TestAppContext) {
+    let Some((h, _dir, _path)) = window(cx) else {
+        return;
+    };
+    let remote = h
+        .store
+        .machines()
+        .unwrap()
+        .into_iter()
+        .find(|machine| matches!(machine.kind, leon_core::MachineKind::Ssh { .. }))
+        .expect("the world has a machine reached over SSH");
+    let started = cx
+        .update_window(h.window.into(), |_, window, cx| {
+            h.shell.update(cx, |shell, cx| {
+                shell.start_live(
+                    Launch::Agent {
+                        kind: AgentId::CLAUDE,
+                        resume: None,
+                        account: None,
+                    },
+                    &remote.id,
+                    "/srv/app",
+                    Place::Session,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+    h.settle(cx);
+    assert!(started);
+    h.shell(cx, |shell| {
+        assert_eq!(shell.chats.len(), 1);
+        assert!(shell.live.all().is_empty(), "no terminal was started");
+        assert_eq!(shell.chats[&LiveId(1)].machine, remote.id);
+    });
+    say(&h, cx, 1, "hello over there");
+    let (_, turn) = turns(&h).pop().expect("a turn was started");
+    assert_eq!(turn.machine, remote);
+    assert_eq!(turn.cwd, "/srv/app");
+    assert!(turn.env.is_empty(), "{:?}", turn.env);
+    // What the agent offers is asked of the agent of that machine too.
+    let told = h.chat.0.lock().unwrap();
+    assert!(told.started.iter().all(|start| start.machine == remote));
+}
+
 #[gpui_kit::test]
 fn without_the_setting_an_agent_starts_in_a_terminal_as_before(cx: &mut TestAppContext) {
     cx.executor().allow_parking();

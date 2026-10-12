@@ -5,9 +5,10 @@
 ### Added
 
 * One interface for every agent, in beta. With the new setting **Agent
-  interface** on *Leon's own*, a session of Claude Code, Codex or opencode on
-  this computer is a conversation in Leon's own interface instead of the
-  agent's program in a terminal: what you wrote, the agent's answer as
+  interface** on *Leon's own*, a session of Claude Code, Codex or opencode is a
+  conversation in Leon's own interface instead of the agent's program in a
+  terminal, on this computer, on a machine reached over SSH and on a paired
+  computer alike: what you wrote, the agent's answer as
   Markdown, its steps folded into a line that opens, and its questions
   (permissions with the change shown, choices, plans) answered with a click
   or with `Enter`. `Escape` stops the turn. In the field, `/` lists

@@ -12,7 +12,7 @@
 //! by `chat_view.rs`. The next prompt resumes the agent's own conversation by
 //! the id it gave it, so the history the agent keeps is one session.
 //!
-//! In beta, behind the setting `agent_interface`: sessions on this computer,
+//! In beta, behind the setting `agent_interface`: sessions on any machine,
 //! for the agents the protocol knows. Everything else starts in a terminal as
 //! before.
 
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Entity, ScrollHandle, Subscription, Task, Window};
-use leon_core::{AgentId, MachineId, MachineKind, Role, SessionId};
+use leon_core::{AgentId, Machine, MachineId, MachineKind, Role, SessionId};
 use leon_turn::{
     Action, AgentCommand, AgentOptions, Answer, ChoiceAnswer, QuestionKind, TurnEvent, TurnSpec,
 };
@@ -35,7 +35,7 @@ use super::terminals::Place;
 use super::tree;
 use crate::chat::model::{Conversation, Phase};
 use crate::chat::turn::{Output, Start, Turn};
-use crate::engine::StatusKind;
+use crate::engine::{MachineState, StatusKind};
 use crate::launch::{self, Launch};
 use crate::settings;
 
@@ -156,7 +156,8 @@ impl Chat {
 impl Shell {
     /// Whether `launch` on `machine` is a conversation rather than a
     /// terminal: the setting asks for it, the protocol knows the agent, and
-    /// the machine is this computer.
+    /// the machine is known. Which machine it is makes no difference: the
+    /// turn's process is started there (`chat::reach`).
     pub(super) fn wants_chat(
         &self,
         launch: &Launch,
@@ -169,10 +170,7 @@ impl Shell {
         crate::schema::Platform::Unix.here()
             && settings::text(cx, "agent_interface") == crate::chat::UNIFIED
             && crate::chat::adapter_of(*kind).is_some()
-            && self
-                .snapshot
-                .machine(machine)
-                .is_some_and(|found| matches!(found.kind, MachineKind::Local))
+            && self.snapshot.machine(machine).is_some()
     }
 
     /// The conversation on screen, which has the keyboard when the main pane
@@ -220,9 +218,13 @@ impl Shell {
             resume: resume.clone(),
             account: account.clone(),
         };
+        let report = match self.engine.machine_state(&found.id) {
+            MachineState::Online(Some(report)) => Some(report),
+            _ => None,
+        };
         if let Err(error) = launch::plan_with(
             &found,
-            None,
+            report.as_ref(),
             cwd,
             &asked,
             &self.engine.ssh(),
@@ -358,7 +360,7 @@ impl Shell {
         .detach();
     }
 
-    /// Asks the agent what it offers on this computer (its modes and models),
+    /// Asks the agent what it offers on its machine (its modes and models),
     /// off the interface thread. Until it answers, and when it cannot, the
     /// conversation runs with the agent's own.
     fn chat_probe(&mut self, id: LiveId, cx: &mut Context<Self>) {
@@ -366,6 +368,9 @@ impl Shell {
             return;
         };
         let Some(adapter) = crate::chat::adapter_of(chat.agent) else {
+            return;
+        };
+        let Some(machine) = self.snapshot.machine(&chat.machine).cloned() else {
             return;
         };
         let program = self.chat_program(chat.agent, cx);
@@ -378,9 +383,10 @@ impl Shell {
         ];
         probe.extend((adapter.options.arguments)());
         let start = Start {
+            env: self.chat_env(&machine, chat.agent, chat.account.as_deref(), &chat.cwd, cx),
+            machine,
             argv: probe,
             cwd: chat.cwd.clone(),
-            env: self.chat_env(chat.agent, chat.account.as_deref(), &chat.cwd, cx),
         };
         let parse = adapter.options.parse;
         let spawner = self.options.chat_spawner.clone();
@@ -435,20 +441,31 @@ impl Shell {
             .unwrap_or_default()
     }
 
-    /// What the agent's process is told through its environment: what a
-    /// terminal of this computer is told (Leon's own, then the user's), then
-    /// the account's.
+    /// What the agent's process is told through its environment. On this
+    /// computer: what a terminal here is told (Leon's own, then the user's),
+    /// then the account's. On another machine only the account's, with the
+    /// home folder of that machine: the rest names files of this computer.
     fn chat_env(
         &self,
+        machine: &Machine,
         agent: AgentId,
         account: Option<&str>,
         cwd: &str,
         cx: &gpui_kit::App,
     ) -> Vec<(String, String)> {
         let prefs = Self::launch_prefs(cx);
-        let mut env = self.memory_env(cwd);
-        env.extend(prefs.env.iter().cloned());
-        let home = self.options.system.home_dir();
+        let local = matches!(machine.kind, MachineKind::Local);
+        let (mut env, home) = if local {
+            let mut env = self.memory_env(cwd);
+            env.extend(prefs.env.iter().cloned());
+            (env, self.options.system.home_dir())
+        } else {
+            let home = match self.engine.machine_state(&machine.id) {
+                MachineState::Online(Some(report)) => report.home,
+                _ => None,
+            };
+            (Vec::new(), home)
+        };
         if let Ok(vars) = launch::account_env(account, agent, &prefs.accounts, home.as_deref()) {
             env.extend(vars);
         }
@@ -510,8 +527,11 @@ impl Shell {
         let Some(adapter) = crate::chat::adapter_of(chat.agent) else {
             return;
         };
+        let Some(machine) = self.snapshot.machine(&chat.machine).cloned() else {
+            return;
+        };
         let program = self.chat_program(chat.agent, cx);
-        let env = self.chat_env(chat.agent, chat.account.as_deref(), &chat.cwd, cx);
+        let env = self.chat_env(&machine, chat.agent, chat.account.as_deref(), &chat.cwd, cx);
         let resume = chat.conversation.session_id.clone();
         let spec = TurnSpec {
             program: &program,
@@ -524,6 +544,7 @@ impl Shell {
             add_dirs: &[],
         };
         let start = Start {
+            machine,
             argv: (adapter.argv)(&spec),
             cwd: chat.cwd.clone(),
             env,
