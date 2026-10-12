@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+* A terminal needs no project or worktree. `New shell` (`Ctrl+T`) with the
+  keyboard on a machine, or with nothing selected, opens a shell in that
+  machine's home folder instead of asking you to select a project first. It
+  lives in a folder of its own in the tree, like any shell outside a project.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added
