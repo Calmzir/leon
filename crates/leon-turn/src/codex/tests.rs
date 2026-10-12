@@ -291,14 +291,14 @@ fn a_decision_goes_back_as_the_server_wrote_it_under_the_number_it_asked_with() 
             session
                 .encode(Action::Answer("0".into(), permission(wrong)))
                 .map(|_| ()),
-            Err(MobileError::BadAnswer)
+            Err(TurnError::BadAnswer)
         );
     }
     assert_eq!(
         session
             .encode(Action::Answer("7".into(), permission("d.0")))
             .map(|_| ()),
-        Err(MobileError::UnknownQuestion)
+        Err(TurnError::UnknownQuestion)
     );
     assert_eq!(
         session
@@ -310,7 +310,7 @@ fn a_decision_goes_back_as_the_server_wrote_it_under_the_number_it_asked_with() 
                 }
             ))
             .map(|_| ()),
-        Err(MobileError::BadAnswer)
+        Err(TurnError::BadAnswer)
     );
 }
 
@@ -598,7 +598,7 @@ fn stopping_it_is_asked_of_the_turn_and_is_not_a_failure() {
     );
     assert_eq!(
         session.encode(Action::Interrupt).map(|_| ()),
-        Err(MobileError::TurnEnded)
+        Err(TurnError::TurnEnded)
     );
 }
 
@@ -651,7 +651,7 @@ fn saying_more_steers_the_turn_in_flight() {
         session
             .encode(Action::Prompt("too late".into()))
             .map(|_| ()),
-        Err(MobileError::TurnEnded)
+        Err(TurnError::TurnEnded)
     );
 }
 
@@ -664,7 +664,7 @@ fn its_mode_and_model_cannot_be_changed_while_it_works() {
     ] {
         assert_eq!(
             session.encode(action).map(|_| ()),
-            Err(MobileError::NotSupported)
+            Err(TurnError::NotSupported)
         );
     }
 }
@@ -718,49 +718,6 @@ fn a_turn_nobody_started_says_so_and_ends() {
     );
     assert!(session.idle());
     assert_eq!(session.exited(0), [TurnEvent::Exited { code: 0 }]);
-}
-
-#[test]
-fn in_the_engine_a_replayed_turn_writes_nothing_again_and_keeps_its_question_open() {
-    use crate::turn::Engine;
-    use std::time::Instant;
-
-    let now = Instant::now();
-    // The first process wrote `turn/start` (acknowledged), was asked,
-    // and went away.
-    let replay = format!(
-        "mise noise\r\n\x1eleon-ready\x1e{{\"id\":\"leon-init\",\"result\":{{}}}}\r\n{THREAD}\r\n\x1eleon-ack:5:h.turn\x1e{TURN}\r\n{COMMAND}\r\n{ASK_COMMAND}\r\n"
-    );
-    let mut engine = Engine::attached(fresh(), 9000, replay.len() as u64, now);
-    let read = engine.data(replay.as_bytes(), now);
-    assert!(read.write.is_empty(), "{:?}", read.write);
-    assert!(matches!(
-        read.events.last(),
-        Some(TurnEvent::Question { id, .. }) if id == "0"
-    ));
-    assert_eq!(engine.unsent(), 0);
-    let answered = engine
-        .act(Action::Answer("0".into(), permission("d.0")), now)
-        .unwrap();
-    let written: String = answered
-        .write
-        .iter()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .collect();
-    assert!(written.contains("E 9001 1 a.0\n"), "{written}");
-
-    // The same turn, its `turn/start` never acknowledged: once caught up,
-    // the question in its place is what gets written.
-    let replay = format!("\x1eleon-ready\x1e{THREAD}\r\n");
-    let mut engine = Engine::attached(fresh(), 9000, replay.len() as u64, now);
-    let read = engine.data(replay.as_bytes(), now);
-    let written: String = read
-        .write
-        .iter()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .collect();
-    assert!(written.contains("thread/loaded/list"), "{written}");
-    assert!(written.contains(" h.turn\n"), "{written}");
 }
 
 #[test]
@@ -1048,9 +1005,13 @@ fn a_server_that_does_not_answer_leaves_the_modes_and_says_the_rest_is_assumed()
 }
 
 #[test]
-fn the_script_waits_for_the_answers_to_both_questions_it_is_given() {
+fn the_script_waits_for_the_answers_to_the_questions_it_is_given() {
     let arguments = options_arguments();
-    for id in [r#""id":"leon-models""#, r#""id":"leon-config""#] {
+    for id in [
+        r#""id":"leon-models""#,
+        r#""id":"leon-config""#,
+        r#""id":"leon-skills""#,
+    ] {
         assert!(arguments.iter().any(|line| line.contains(id)), "{id}");
         assert!(OPTIONS_SCRIPT.contains(id), "{id}");
     }
@@ -1076,6 +1037,9 @@ while IFS= read -r line; do
     *'"method":"config/read"'*)
         printf '{"id":"leon-config","result":{"config":{"approval_policy":"never","sandbox_mode":"danger-full-access"}}}\n'
         printf '{"id":"leon-models","result":{"data":[{"id":"m","model":"m","displayName":"M","hidden":false,"supportedReasoningEfforts":[]}]}}\n' ;;
+    # A server from before skills answers that it does not know the question.
+    *'"method":"skills/list"'*)
+        printf '{"id":"leon-skills","error":{"code":-32601,"message":"Method not found"}}\n' ;;
     esac
 done
 "#,
@@ -1103,4 +1067,96 @@ done
         .collect();
     assert!(left.is_empty(), "{left:?}");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// What its `skills/list` answered, two skills kept and one turned off.
+const SKILLS: &str = r#"{"id":"leon-skills","result":{"data":[{"cwd":"/work","errors":[],"skills":[{"name":"diagnose-crash","description":"Diagnose why a program crashed on this machine, from a core dump.","shortDescription":"Why a program crashed","enabled":true,"path":"/home/me/.codex/skills/diagnose-crash/SKILL.md","scope":"user"},{"name":"humanizer","description":"Rewrite text so it reads like the writer.","shortDescription":null,"enabled":true,"path":"/home/me/.codex/skills/humanizer/SKILL.md","scope":"user"},{"name":"off","description":"Not used.","enabled":false,"path":"/home/me/.codex/skills/off/SKILL.md","scope":"user"}]}]}}"#;
+
+#[test]
+fn it_lists_what_the_server_does_itself_then_its_skills_by_their_dollar_names() {
+    let options = parse_options(&format!("leon-version:codex 0.160.1\n{SKILLS}\n"));
+    let listed: Vec<(&str, &str)> = options
+        .commands
+        .iter()
+        .map(|command| (command.name.as_str(), command.insert.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("compact", "/compact"),
+            ("review", "/review"),
+            ("diagnose-crash", "$diagnose-crash"),
+            ("humanizer", "$humanizer"),
+        ]
+    );
+    assert_eq!(
+        options.commands[2].description.as_deref(),
+        Some("Why a program crashed")
+    );
+    assert_eq!(
+        options.commands[3].description.as_deref(),
+        Some("Rewrite text so it reads like the writer.")
+    );
+    // A server that could not be asked still has what it does itself.
+    let alone = parse_options("leon-version:\n");
+    assert_eq!(alone.commands.len(), 2);
+}
+
+#[test]
+fn compacting_and_reviewing_are_the_servers_own_requests_and_anything_else_is_a_turn() {
+    let asked = |prompt: &str| {
+        let mut session = fresh();
+        session.first(&TurnSpec {
+            resume: Some("01a11902-6cec"),
+            ..spec(prompt)
+        });
+        let step = read(session.as_mut(), THREAD);
+        value(&step.send[0])
+    };
+    let compact = asked("/compact");
+    assert_eq!(compact["method"], "thread/compact/start");
+    assert_eq!(compact["params"], json!({ "threadId": "01a11902-6cec" }));
+
+    let review = asked("/review");
+    assert_eq!(review["method"], "review/start");
+    assert_eq!(
+        review["params"]["target"],
+        json!({ "type": "uncommittedChanges" })
+    );
+    let about = asked("/review  the retry loop ");
+    assert_eq!(
+        about["params"]["target"],
+        json!({ "type": "custom", "instructions": "the retry loop" })
+    );
+
+    // A path, or a word that only starts like one, is said to the model.
+    for prompt in [
+        "/compact the notes",
+        "/reviewer",
+        "look at /review",
+        "$humanizer this",
+    ] {
+        let turn = asked(prompt);
+        assert_eq!(turn["method"], "turn/start", "{prompt}");
+        assert_eq!(turn["params"]["input"][0]["text"], prompt);
+    }
+}
+
+#[test]
+fn a_compaction_has_no_turn_in_its_answer_and_ends_like_any_turn() {
+    let mut session = fresh();
+    session.first(&TurnSpec {
+        resume: Some("01a11902-6cec"),
+        ..spec("/compact")
+    });
+    read(session.as_mut(), THREAD);
+    let answered = read(session.as_mut(), r#"{"id":"leon-turn","result":{}}"#);
+    assert!(answered.events.is_empty());
+    read(session.as_mut(), TURN_STARTED);
+    let done = read(session.as_mut(), COMPLETED);
+    assert!(done
+        .events
+        .iter()
+        .any(|event| matches!(event, TurnEvent::Finished { ok: true, .. })));
+    assert!(session.idle());
 }

@@ -25,14 +25,15 @@ use leon_link::client::{Client, ConnState, Failure, PtyEvent, PtyHandle, PtyStre
 use leon_remote::parse_worktree_list;
 use leon_wire::{ExecSpec, Grid, SharedProject, SharedSession, SharedTranscript};
 
-use crate::agents::{adapter, login_spec, parse_label, turn_label, Action, Adapter, TurnSpec};
+use crate::agents::{login_spec, parse_label, turn_label};
 use crate::bridge::{bridge_spec, ARGUMENT_BYTES};
-use crate::claude::AgentOptions;
 use crate::error::MobileError;
 use crate::events::{Answer, TurnEvent};
 use crate::logo::ProjectLogo;
+use crate::options::AgentOptions;
 use crate::runtime::{on_runtime, runtime};
 use crate::turn::{Effects, Engine};
+use leon_turn::{adapter, Action, Adapter, TurnSpec};
 
 /// The terminal of a turn. Nobody looks at it: it is wide so that a program
 /// which asks for the width does not fold its lines.
@@ -556,7 +557,7 @@ exit 0"#;
 done
 exit 0"#;
         let overrides = self.overrides();
-        let programs: Vec<(String, &'static str)> = crate::agents::ADAPTERS
+        let programs: Vec<(String, &'static str)> = leon_turn::ADAPTERS
             .iter()
             .map(|adapter| (program_of(adapter, &overrides), adapter.id))
             .collect();
@@ -596,7 +597,7 @@ exit 0"#;
         let client = self.client.clone();
         on_runtime(async move {
             let output = client.exec(spec, Some(OPTIONS_TIMEOUT_MS)).await?;
-            Ok(parse(&String::from_utf8_lossy(&output.stdout)))
+            Ok(parse(&String::from_utf8_lossy(&output.stdout)).into())
         })
         .await
     }
@@ -876,9 +877,9 @@ impl Turn {
                         Input::Pty(PtyEvent::Gone) => {
                             let mut effects = engine.exited(0);
                             effects.events.retain(|event| {
-                                matches!(event, TurnEvent::QuestionResolved { .. })
+                                matches!(event, leon_turn::TurnEvent::QuestionResolved { .. })
                             });
-                            effects.events.push(TurnEvent::Gone);
+                            effects.events.push(leon_turn::TurnEvent::Gone);
                             (effects, true)
                         }
                         Input::Pty(PtyEvent::Disconnected) => (engine.disconnected(), false),
@@ -892,7 +893,7 @@ impl Turn {
                     handle.write(bytes);
                 }
                 for event in events {
-                    listener.on_event(event);
+                    listener.on_event(event.into());
                 }
                 if last {
                     break;
@@ -930,7 +931,7 @@ impl Turn {
     /// and [`TurnEvent::QuestionResolved`] says when it does; until then it
     /// may be answered again and the later answer stands.
     pub fn answer(&self, question_id: String, answer: Answer) -> Result<(), MobileError> {
-        self.act(Action::Answer(question_id, answer))
+        self.act(Action::Answer(question_id, answer.into()))
     }
 
     /// Tells the agent more while it works. It reads it when it gets to it;

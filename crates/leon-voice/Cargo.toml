@@ -1,0 +1,32 @@
+[package]
+name = "leon-voice"
+description = "Dictation for Leon: a speech model the person chooses to download, the microphone, and what was said as text."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The microphone and the model: what needs a C++ toolchain to build and a
+# sound system to run. Without it the crate is the catalogue, the models on
+# disk and the arithmetic of sound, which build anywhere.
+engine = ["dep:cpal", "dep:whisper-rs"]
+
+[dependencies]
+# The microphone, through what each system has: ALSA on Linux (PipeWire and
+# PulseAudio answer for it), CoreAudio on macOS, WASAPI on Windows.
+cpal = { version = "0.18", optional = true }
+leon-update.workspace = true
+thiserror.workspace = true
+# whisper.cpp, built with the crate: needs cmake, a C++ compiler and libclang.
+whisper-rs = { version = "0.16", optional = true }
+
+[dev-dependencies]
+leon-update = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+tokio.workspace = true
+
+[[example]]
+name = "dictate"
+required-features = ["engine"]

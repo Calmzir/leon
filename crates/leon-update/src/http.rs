@@ -39,6 +39,12 @@ pub enum HostPolicy {
     /// repository's release downloads, and the hosts GitHub redirects release
     /// assets to. Over HTTPS only.
     Github,
+    /// The speech models of dictation: the one repository they are kept in
+    /// on Hugging Face, and the hosts it redirects a file to. Over HTTPS
+    /// only. Those hosts change with its storage, so any of its two domains
+    /// is followed: what is downloaded is held to a checksum written in
+    /// Leon, which is what makes it the file that was meant.
+    Models,
     /// A server on this computer, over plain HTTP. Tests only.
     #[cfg(test)]
     Loopback,
@@ -74,6 +80,12 @@ const CDN_HOSTS: [&str; 2] = [
     "release-assets.githubusercontent.com",
 ];
 
+/// Where the speech models are, on Hugging Face.
+const MODELS_PATH: &str = "/ggerganov/whisper.cpp/resolve/";
+
+/// The domains Hugging Face serves a file of a repository from.
+const MODEL_DOMAINS: [&str; 2] = [".hf.co", ".huggingface.co"];
+
 impl HostPolicy {
     /// Whether `url` may be asked.
     pub fn allows(&self, url: &str) -> bool {
@@ -91,6 +103,15 @@ impl HostPolicy {
                     host => CDN_HOSTS.contains(&host),
                 }
             }
+            HostPolicy::Models => {
+                if parts.scheme != "https" {
+                    return false;
+                }
+                match parts.host.as_str() {
+                    "huggingface.co" => parts.path.starts_with(MODELS_PATH),
+                    host => MODEL_DOMAINS.iter().any(|domain| host.ends_with(domain)),
+                }
+            }
             #[cfg(test)]
             HostPolicy::Loopback => parts.scheme == "http" && parts.host.starts_with("127.0.0.1:"),
         }
@@ -99,7 +120,7 @@ impl HostPolicy {
     /// The value of curl's `--proto` for it.
     fn proto(&self) -> &'static str {
         match self {
-            HostPolicy::Github => "=https",
+            HostPolicy::Github | HostPolicy::Models => "=https",
             #[cfg(test)]
             HostPolicy::Loopback => "=http",
         }
@@ -322,6 +343,13 @@ impl CurlHttp {
     pub fn new() -> Self {
         Self {
             policy: HostPolicy::Github,
+        }
+    }
+
+    /// The client for the speech models of dictation.
+    pub fn models() -> Self {
+        Self {
+            policy: HostPolicy::Models,
         }
     }
 
@@ -753,6 +781,27 @@ impl Http for ScriptedHttp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_models_policy_is_one_repository_and_the_hosts_it_is_served_from() {
+        let models = HostPolicy::Models;
+        for good in [
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/abc/ggml-base.bin",
+            "https://us.aws.cdn.hf.co/xet-bridge-us/641a/5189?X-Amz-Signature=1",
+            "https://cdn-lfs.huggingface.co/repos/aa/bb/cc",
+        ] {
+            assert!(models.allows(good), "{good}");
+        }
+        for bad in [
+            "http://huggingface.co/ggerganov/whisper.cpp/resolve/abc/ggml-base.bin",
+            "https://huggingface.co/someone/else/resolve/main/ggml-base.bin",
+            "https://hf.co.evil.example/ggml-base.bin",
+            "https://evilhf.co.example/x",
+            "https://github.com/zavudev/leon/releases/download/v1/leon.tar.gz",
+        ] {
+            assert!(!models.allows(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn only_this_repositorys_release_addresses_are_asked() {

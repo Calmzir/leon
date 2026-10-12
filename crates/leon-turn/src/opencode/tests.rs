@@ -312,7 +312,7 @@ fn a_command_it_may_not_run_by_itself_is_a_question_with_its_own_options() {
     // An option it did not offer is no answer; a plain refusal is its own.
     assert_eq!(
         session.encode(Action::Answer("0".into(), permission("forever"))),
-        Err(MobileError::BadAnswer)
+        Err(TurnError::BadAnswer)
     );
     let refusal = session
         .encode(Action::Answer("0".into(), permission("deny")))
@@ -323,7 +323,7 @@ fn a_command_it_may_not_run_by_itself_is_a_question_with_its_own_options() {
     );
     assert_eq!(
         session.encode(Action::Answer("7".into(), permission("once"))),
-        Err(MobileError::UnknownQuestion)
+        Err(TurnError::UnknownQuestion)
     );
 
     // Delivered, the question is closed; the rest of the turn reads on.
@@ -481,7 +481,7 @@ fn stopping_it_cancels_the_session_and_what_it_still_asks() {
     // It cannot be told more while it works.
     assert_eq!(
         session.encode(Action::Prompt("also say hi".into())),
-        Err(MobileError::NotSupported)
+        Err(TurnError::NotSupported)
     );
     let after: Vec<&str> = CANCEL
         .lines()
@@ -509,10 +509,7 @@ fn stopping_it_cancels_the_session_and_what_it_still_asks() {
             },
         ]
     );
-    assert_eq!(
-        session.encode(Action::Interrupt),
-        Err(MobileError::TurnEnded)
-    );
+    assert_eq!(session.encode(Action::Interrupt), Err(TurnError::TurnEnded));
 }
 
 #[test]
@@ -615,57 +612,6 @@ fn a_turn_nobody_started_says_so_and_ends() {
         }]
     );
     assert!(session.idle());
-}
-
-#[test]
-fn in_the_engine_a_replayed_turn_writes_nothing_again_and_keeps_its_question_open() {
-    use crate::turn::Engine;
-    use std::time::Instant;
-
-    let now = Instant::now();
-    let lines: Vec<&str> = ALLOW.lines().collect();
-    let asked = lines
-        .iter()
-        .position(|line| line.contains("session/request_permission"))
-        .unwrap();
-    // The first process wrote the prompt (acknowledged), was asked, and
-    // went away.
-    let replay = format!(
-        "shell noise\r\n\x1eleon-ready\x1e{}\r\n{}\r\n\x1eleon-ack:5:h.turn\x1e{}\r\n",
-        lines[0],
-        lines[1],
-        lines[2..=asked].join("\r\n")
-    );
-    let mut engine = Engine::attached(fresh(), 9000, replay.len() as u64, now);
-    let read = engine.data(replay.as_bytes(), now);
-    assert!(read.write.is_empty(), "{:?}", read.write);
-    assert!(matches!(
-        read.events.last(),
-        Some(TurnEvent::Question { id, .. }) if id == "0"
-    ));
-    assert_eq!(engine.unsent(), 0);
-    let answered = engine
-        .act(Action::Answer("0".into(), permission("once")), now)
-        .unwrap();
-    let written: String = answered
-        .write
-        .iter()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .collect();
-    assert!(written.contains("E 9001 1 a.0\n"), "{written}");
-
-    // The same turn, its prompt never acknowledged: once caught up, the
-    // question in its place is what gets written.
-    let replay = format!("\x1eleon-ready\x1e{}\r\n{}\r\n", lines[0], lines[1]);
-    let mut engine = Engine::attached(fresh(), 9000, replay.len() as u64, now);
-    let read = engine.data(replay.as_bytes(), now);
-    let written: String = read
-        .write
-        .iter()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .collect();
-    assert!(written.contains("leon/lost"), "{written}");
-    assert!(written.contains(" h.turn\n"), "{written}");
 }
 
 #[test]
@@ -898,4 +844,38 @@ fn the_options_script_asks_again_when_the_models_were_not_known_yet() {
     assert_eq!(options.models.len(), 1);
     assert_eq!(options.models[0].id, "fake/one");
     assert_eq!(options.modes[0].id, "build");
+}
+
+#[test]
+fn its_commands_are_the_three_it_always_has_until_a_session_lists_them() {
+    let assumed = parse_options("leon-version:\nleon-models:\n\n\nleon-agents:\n");
+    let names: Vec<&str> = assumed
+        .commands
+        .iter()
+        .map(|command| command.insert.as_str())
+        .collect();
+    assert_eq!(names, ["/init", "/review", "/compact"]);
+
+    let mut session = fresh();
+    let step = read(
+        session.as_mut(),
+        &update(json!({
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [
+                {"name": "init", "description": "guided AGENTS.md setup"},
+                {"name": "ship", "description": "", "input": {"hint": "branch"}},
+            ],
+        })),
+    );
+    let listed = step.commands.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[1].insert, "/ship");
+    assert_eq!(listed[1].description, None);
+    assert_eq!(listed[1].hint.as_deref(), Some("branch"));
+    // Anything else it says leaves the list as it was.
+    let other = read(
+        session.as_mut(),
+        &update(json!({"sessionUpdate": "usage_update"})),
+    );
+    assert!(other.commands.is_none());
 }

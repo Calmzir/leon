@@ -200,6 +200,17 @@ impl Shell {
                 return;
             }
         }
+        // The field of the conversation on screen keeps the keyboard.
+        if self.overlay == Overlay::None && self.pane == Pane::Main {
+            if let Some(chat) = self.focused_chat().and_then(|id| self.chats.get(&id)) {
+                if !chat.typing(window, cx) {
+                    chat.input
+                        .clone()
+                        .update(cx, |input, cx| input.focus(window, cx));
+                }
+                return;
+            }
+        }
         if self.terminal_focused() && !self.find_focused(window, cx) {
             if let Main::Live(id) = &self.main {
                 if let Some(session) = self.live.get(*id) {
@@ -239,6 +250,21 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // With the setting, an agent of the unified protocol is a
+        // conversation in Leon's own interface, not a program in a terminal.
+        if self.wants_chat(&launch, machine, cx) {
+            if let Launch::Agent {
+                kind,
+                resume,
+                account,
+            } = launch
+            {
+                return self.start_chat(
+                    kind, resume, account, machine, cwd, place, history, window, cx,
+                );
+            }
+            return false;
+        }
         let (agent, account) = match &launch {
             Launch::Agent { kind, account, .. } | Launch::Prompted { kind, account, .. } => {
                 (Some(*kind), account.clone())
@@ -444,7 +470,7 @@ impl Shell {
     /// project is. The engine is asked to write that file, so that it is
     /// there to be read. Nothing when the window was not told where its data
     /// is.
-    fn memory_env(&self, cwd: &str) -> Vec<(String, String)> {
+    pub(super) fn memory_env(&self, cwd: &str) -> Vec<(String, String)> {
         let Some(terminals) = &self.options.memory else {
             return Vec::new();
         };
@@ -1177,6 +1203,25 @@ impl Shell {
         cx.notify();
     }
 
+    /// What a session's row says: its label and its state, whether it is a
+    /// terminal or a conversation.
+    pub(super) fn live_row(&self, id: LiveId, cx: &gpui_kit::App) -> (String, LiveState) {
+        match (self.live.get(id), self.chats.get(&id)) {
+            (Some(session), _) => (session.label(), session.state(cx)),
+            (None, Some(chat)) => (chat.label(), chat.state()),
+            (None, None) => (String::new(), LiveState::Starting),
+        }
+    }
+
+    /// How a leaf is doing, when it is a session: a terminal's activity as
+    /// last read, a conversation's as it is.
+    pub(super) fn leaf_activity(&self, id: LiveId) -> Option<Activity> {
+        self.live
+            .get(id)
+            .map(|session| session.activity)
+            .or_else(|| self.chats.get(&id).map(|chat| chat.activity()))
+    }
+
     /// Puts the live sessions in the tree and keeps the cursor on its node.
     pub(super) fn refresh_live(&mut self) {
         self.placement = self.place(&self.snapshot);
@@ -1196,6 +1241,24 @@ impl Shell {
             self.main = Main::Live(id);
             self.pane = Pane::Main;
             self.sync_focus(window, cx);
+            cx.notify();
+            return;
+        }
+        // A conversation is a session like a terminal: its row is shown, and
+        // looking at it answers what its agent last did.
+        if self.chats.contains_key(&id) {
+            self.workspaces.focus(id);
+            self.main = Main::Live(id);
+            self.pane = Pane::Main;
+            // Its row is the history session's once its agent wrote one.
+            let node = match self.chats.get(&id).and_then(|chat| chat.history.clone()) {
+                Some(history) if self.placement.merged.contains(&history) => {
+                    NodeId::Session(history)
+                }
+                _ => NodeId::Live(id),
+            };
+            self.show(&node);
+            self.chat_shown(id, window, cx);
             cx.notify();
             return;
         }
@@ -1449,16 +1512,17 @@ impl Shell {
         let terminals: Vec<LiveId> = leaves
             .iter()
             .copied()
-            .filter(|leaf| !self.changes.contains_key(leaf))
+            .filter(|leaf| !self.changes.contains_key(leaf) && !self.chats.contains_key(leaf))
             .collect();
         if terminals.len() != leaves.len() {
             let mine: Vec<LiveId> = leaves
                 .iter()
                 .copied()
-                .filter(|leaf| self.changes.contains_key(leaf))
+                .filter(|leaf| self.changes.contains_key(leaf) || self.chats.contains_key(leaf))
                 .collect();
             for leaf in mine {
                 self.close_changes(leaf, window, cx);
+                self.close_chat(leaf, window, cx);
             }
             if let Some(next) = terminals.first() {
                 self.close_tab(*next, window, cx);
@@ -1498,6 +1562,11 @@ impl Shell {
     /// of the workspace returns the main pane to what the folder shows
     /// without terminals.
     pub(super) fn close_live(&mut self, id: LiveId, window: &mut Window, cx: &mut Context<Self>) {
+        // A conversation is a session too, closed its own way.
+        if self.chats.contains_key(&id) {
+            self.close_chat(id, window, cx);
+            return;
+        }
         let Some(place) = self
             .live
             .get(id)
@@ -1575,6 +1644,7 @@ impl Shell {
         for id in inside {
             self.close_live(id, window, cx);
         }
+        self.close_chats_in(machine, root, window, cx);
         let tabs: Vec<LiveId> = self
             .changes
             .iter()
@@ -1633,7 +1703,12 @@ impl Shell {
         // Waking it ends its sleep.
         self.slept.remove(&session.id);
         // One terminal per history session: look at the one that has it.
-        if let Some(running) = self.live.of_history(&session.id).map(|live| live.id) {
+        if let Some(running) = self
+            .live
+            .of_history(&session.id)
+            .map(|live| live.id)
+            .or_else(|| self.chat_of_history(&session.id))
+        {
             self.show_session(running, window, cx);
             return;
         }
@@ -2210,6 +2285,11 @@ impl Shell {
                             .get(&id)
                             .map(|view| (view.target.machine.clone(), view.target.path.clone()))
                     })
+                    .or_else(|| {
+                        self.chats
+                            .get(&id)
+                            .map(|chat| (chat.machine.clone(), chat.cwd.clone()))
+                    })
             },
             |session| Some((session.machine.clone(), session.cwd.clone())),
         ) else {
@@ -2464,10 +2544,13 @@ impl Shell {
             let (label, agent) = match (self.files.get(&focus), self.changes.get(&focus)) {
                 (Some(doc), _) => (Self::file_label(doc), None),
                 (None, Some(view)) => (Self::changes_label(view), None),
-                (None, None) => self.live.get(focus).map_or_else(
-                    || (String::new(), None),
-                    |session| (session.label(), session.shown_agent()),
-                ),
+                (None, None) => match self.chats.get(&focus) {
+                    Some(chat) => (chat.label(), Some(chat.agent)),
+                    None => self.live.get(focus).map_or_else(
+                        || (String::new(), None),
+                        |session| (session.label(), session.shown_agent()),
+                    ),
+                },
             };
             let panes = tab.layout.leaves().len();
             bar = bar.child(
@@ -2570,6 +2653,9 @@ impl Shell {
         }
         if let Some(changes) = self.render_changes_pane(id, marked, colours, cx) {
             return changes;
+        }
+        if let Some(chat) = self.render_chat_pane(id, marked, colours, cx) {
+            return chat;
         }
         let Some(session) = self.live.get(id) else {
             return div().into_any_element();

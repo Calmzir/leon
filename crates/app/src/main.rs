@@ -16,6 +16,7 @@ mod address;
 mod agent_usage;
 mod avatar;
 mod brand;
+mod chat;
 mod cli;
 mod connect;
 mod diagnose;
@@ -59,6 +60,7 @@ mod trust;
 mod ui;
 mod updates;
 mod usage;
+mod voice;
 
 use gpui_kit::{
     px, size, App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
@@ -327,6 +329,12 @@ fn main() {
     let started = engine.clone();
 
     // The user's themes, before anything asks for a theme.
+    // Dictation: nothing is read or downloaded until a person asks.
+    #[cfg(unix)]
+    let voice: std::sync::Arc<dyn voice::Voice> =
+        std::sync::Arc::new(voice::Local::new(&data_dir, runtime.handle().clone()));
+    #[cfg(not(unix))]
+    let voice: std::sync::Arc<dyn voice::Voice> = std::sync::Arc::new(voice::Unavailable);
     let themes_dir = data_dir.join(ui::THEMES_FOLDER);
     let summary = theme::user::reload(&themes_dir);
     for id in &summary.loaded {
@@ -404,6 +412,7 @@ fn main() {
                         durable: durable.clone(),
                         den_cast,
                         memory: memory_terminals.clone(),
+                        voice: voice.clone(),
                         ..ui::Options::default()
                     };
                     let mut shell = ui::Shell::new(engine, options, window, cx);

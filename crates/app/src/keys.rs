@@ -347,6 +347,9 @@ pub enum Command {
     ShowUsage,
     /// Reads the agents' usage limits again now.
     RefreshUsage,
+    /// Opens the microphone for the conversation on screen, or closes it and
+    /// writes what was said in its field.
+    Dictate,
     /// The board of tasks of the project: columns, shared with the agents.
     ShowTasks,
     /// Asks for the title of a new task and puts it on the board.
@@ -2121,6 +2124,14 @@ pub const BINDINGS: &[Binding] = &[
         true,
     ),
     bind(
+        C::Dictate,
+        "Dictate into the conversation",
+        S::Terminal,
+        W::Anywhere,
+        &[],
+        true,
+    ),
+    bind(
         C::ShowTasks,
         "Show the task board",
         S::View,
@@ -2492,6 +2503,7 @@ pub fn keywords(command: Command) -> &'static str {
         C::DeleteDen => "den layout remove discard",
         C::OpenDensFolder => "dens folder directory reveal finder files json export import share",
         C::ShowUsage | C::RefreshUsage => "limits quota rate tokens credits remaining percent reset five hour weekly claude codex opencode",
+        C::Dictate => "voice speech microphone talk speak say whisper transcribe prompt conversation chat",
         C::ShowTasks | C::NewTask | C::StartTask => "tasks worktree session code start work create board kanban todo issues backlog doing review done cards columns agents github linear create add",
         C::SettleSession | C::BringBackSession => "shelf archive put away done finished sessions sidebar return restore",
         C::SnoozeSession => "shelf hide later remind wake tomorrow hour sessions sidebar",
@@ -2766,6 +2778,7 @@ mod tests {
             C::Settings,
             C::ShowUsage,
             C::RefreshUsage,
+            C::Dictate,
             C::ShowTasks,
             C::NewTask,
             C::StartTask,
@@ -2946,6 +2959,7 @@ mod tests {
                 | C::Settings
                 | C::ShowUsage
                 | C::RefreshUsage
+                | C::Dictate
                 | C::ShowTasks
                 | C::NewTask
                 | C::StartTask

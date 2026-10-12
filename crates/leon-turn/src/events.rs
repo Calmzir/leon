@@ -26,7 +26,7 @@ const WRITTEN_LINES: usize = 40;
 const NOISE_LINES: usize = 6;
 
 /// What happens during a turn, as a chat shows it.
-#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TurnEvent {
     /// The agent's conversation exists. `session_id` is what a later turn
     /// passes as `resume_id` to continue it.
@@ -93,11 +93,11 @@ pub enum TurnEvent {
         duration_ms: Option<u64>,
         /// Tools the agent wanted and the permission mode refused.
         denied_tools: Vec<String>,
-        /// The person stopped it ([`crate::Turn::interrupt`]); `ok` is then
+        /// The person stopped it (an interrupt); `ok` is then
         /// false without anything having gone wrong.
         interrupted: bool,
     },
-    /// The agent asks something and waits for [`crate::Turn::answer`].
+    /// The agent asks something and waits for an [`Answer`].
     /// Several may be open at once.
     Question {
         /// Names the question in the answer and in
@@ -136,7 +136,7 @@ pub enum TurnEvent {
 }
 
 /// What an agent asks the person.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuestionKind {
     /// May it use this tool, this way?
     Permission {
@@ -166,7 +166,7 @@ pub enum QuestionKind {
 }
 
 /// What a way of answering a permission question does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionEffect {
     /// Allows this one use.
     AllowOnce,
@@ -177,7 +177,7 @@ pub enum PermissionEffect {
 }
 
 /// One way of answering a permission question.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionChoice {
     /// What goes back in [`Answer::Permission`].
     pub id: String,
@@ -194,7 +194,7 @@ pub struct PermissionChoice {
 }
 
 /// One question with options.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChoiceQuestion {
     /// Names the question in [`ChoiceAnswer`].
     pub id: String,
@@ -211,7 +211,7 @@ pub struct ChoiceQuestion {
 }
 
 /// One thing that can be picked.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChoiceOption {
     /// What is picked; it goes back in [`ChoiceAnswer`].
     pub label: String,
@@ -220,7 +220,7 @@ pub struct ChoiceOption {
 }
 
 /// The answer to one [`ChoiceQuestion`].
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChoiceAnswer {
     /// The question's id.
     pub question_id: String,
@@ -231,7 +231,7 @@ pub struct ChoiceAnswer {
 }
 
 /// What the person answers to a [`TurnEvent::Question`].
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     /// To [`QuestionKind::Permission`].
     Permission {
@@ -256,7 +256,7 @@ pub enum Answer {
 
 /// Cuts a terminal's bytes into lines without escape sequences.
 #[derive(Debug, Default)]
-pub(crate) struct Lines {
+pub struct Lines {
     pending: Vec<u8>,
     /// The current line outgrew [`MAX_LINE_BYTES`]: skip to its end.
     skipping: bool,
@@ -264,7 +264,7 @@ pub(crate) struct Lines {
 
 impl Lines {
     /// Adds bytes; returns the lines they completed.
-    pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+    pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
         let mut lines = Vec::new();
         for &byte in bytes {
             if byte == b'\n' {
@@ -285,7 +285,7 @@ impl Lines {
     }
 
     /// Forgets a line cut in two: after a gap its beginning is lost.
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.pending.clear();
         self.skipping = true;
     }
@@ -340,7 +340,7 @@ fn skip_escape(line: &[u8], at: usize) -> usize {
 }
 
 /// The JSON object on a line, allowing for text a shell left before it.
-pub(crate) fn object_on(line: &str) -> Option<Value> {
+pub fn object_on(line: &str) -> Option<Value> {
     let start = line.find('{')?;
     match serde_json::from_str::<Value>(&line[start..]) {
         Ok(value) if value.is_object() => Some(value),

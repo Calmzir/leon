@@ -67,6 +67,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <string>public.app-category.developer-tools</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Leon listens only while you dictate into a conversation, and what you say stays on this Mac.</string>
 ${development}
 </dict>
 </plist>

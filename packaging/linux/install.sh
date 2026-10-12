@@ -176,7 +176,7 @@ done
 missing="$(ldd "$source_bin" 2>/dev/null | awk '/not found/ {print $1}' | sort -u | tr '\n' ' ' || true)"
 if [ -n "$missing" ]; then
   warn "missing libraries: $missing"
-  warn "install the matching Wayland/X11, XKB and fontconfig runtime packages for your distribution"
+  warn "install the matching Wayland/X11, XKB, fontconfig and ALSA runtime packages for your distribution"
 fi
 
 mkdir -p "$bin_dir" "$(dirname "$desktop_file")" "$doc_dir"

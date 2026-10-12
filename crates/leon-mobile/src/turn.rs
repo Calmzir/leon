@@ -33,10 +33,10 @@
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::agents::{Action, AgentSession, Outgoing, Step};
 use crate::bridge::{self, Mark, Marks, END_TAG};
 use crate::error::MobileError;
-use crate::events::{object_on, Lines, TurnEvent};
+use leon_turn::{object_on, Lines, TurnEvent};
+use leon_turn::{Action, AgentSession, Outgoing, Step};
 
 /// How long a written message may stay unacknowledged before it is written
 /// again.
@@ -375,14 +375,14 @@ impl Bridged {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::TurnSpec;
-    use crate::events::Answer;
+    use leon_turn::Answer;
+    use leon_turn::TurnSpec;
 
     const ASK: &str = r#"{"type":"control_request","request_id":"q1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
     const RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"session_id":"s","queued_turn_count":0}"#;
 
     fn claude() -> Box<dyn AgentSession> {
-        crate::claude::session(0)
+        leon_turn::claude::session(0)
     }
 
     fn allow() -> Action {
@@ -589,3 +589,6 @@ mod tests {
         assert_eq!(numbers(&stopped.write), [9002]);
     }
 }
+
+#[cfg(test)]
+mod replay_tests;

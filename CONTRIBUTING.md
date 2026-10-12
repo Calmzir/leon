@@ -11,11 +11,14 @@ interface. `rust-toolchain.toml` selects the stable channel with `rustfmt` and
 
 | OS | You need |
 | --- | --- |
-| macOS | Xcode command line tools (`xcode-select --install`) and the Metal toolchain that comes with Xcode |
-| Linux | A C toolchain and `pkg-config`; on Debian or Ubuntu `sudo apt install build-essential pkg-config libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev`. A GPU driver with Vulkan to run the app |
+| macOS | Xcode command line tools (`xcode-select --install`), the Metal toolchain that comes with Xcode, and `cmake` (`brew install cmake`) |
+| Linux | A C toolchain and `pkg-config`; on Debian or Ubuntu `sudo apt install build-essential pkg-config libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev cmake libclang-dev libasound2-dev`. A GPU driver with Vulkan to run the app |
 | Windows | Visual Studio Build Tools with the C++ workload and the Windows SDK |
 
-SQLite is built from source by cargo; no other system library is needed.
+SQLite is built from source by cargo, and so is whisper.cpp, the speech model
+behind dictation: that is what `cmake`, a C++ compiler and libclang are for
+(macOS and Linux; Windows builds without it). On Linux the microphone is read
+through ALSA, hence its development files. No other system library is needed.
 
 ## The fast loop
 

@@ -348,6 +348,12 @@ struct Harness {
     folder_dialogs: Rc<std::cell::Cell<usize>>,
     /// The terminals the shell started, and what they were sent.
     computer: Rc<Scripted>,
+    /// The agents of conversations: what they were started with and told.
+    #[cfg_attr(not(leon_posix_tests), allow(dead_code))]
+    chat: crate::chat::turn::testing::Scripted,
+    /// Dictation: the models, the microphone and what it is said to hear.
+    #[cfg_attr(not(leon_posix_tests), allow(dead_code))]
+    voice: crate::voice::testing::Scripted,
     /// The user's `~/.ssh`, in memory.
     ssh: Arc<tests_connect::FakeSsh>,
     /// What the key file dialog answers.
@@ -460,8 +466,12 @@ fn open_core(
     let quits = Rc::new(std::cell::Cell::new(0usize));
     let quits_in = quits.clone();
     let updates = updates(runtime.handle());
+    let chat = crate::chat::turn::testing::Scripted::default();
+    let voice = crate::voice::testing::Scripted::default();
     let options = Options {
         backend: computer.clone(),
+        chat_spawner: Arc::new(chat.clone()),
+        voice: Arc::new(voice.clone()),
         ready: READY_NOW,
         reload_throttle: std::time::Duration::ZERO,
         search_debounce: std::time::Duration::ZERO,
@@ -540,6 +550,8 @@ fn open_core(
         notes,
         folder_dialogs: dialogs,
         computer,
+        chat,
+        voice,
         ssh,
         key_answer,
         urls,
@@ -7882,6 +7894,10 @@ mod tests_guard;
 #[cfg(leon_posix_tests)]
 #[path = "tests_session.rs"]
 mod tests_session;
+
+#[cfg(leon_posix_tests)]
+#[path = "tests_chat.rs"]
+mod tests_chat;
 
 #[cfg(leon_posix_tests)]
 #[path = "tests_files.rs"]

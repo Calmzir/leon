@@ -59,6 +59,18 @@ switching to one never restarts it.
   Leon binary it was started from until then, so an update is picked up by the
   next keeper. Two windows of one data directory leave each other's sessions
   alone. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#durable-local-sessions).
+* **One interface for every agent (beta)**: with the setting *Agent interface*
+  on *Leon's own*, a session of Claude Code, Codex or opencode on this
+  computer is a conversation drawn by Leon instead of the agent's program in a
+  terminal: the same messages, the same folded steps, the same permission
+  questions and the same keys whatever the agent is. In its field `/` lists
+  the agent's own commands and skills, `@` names a file, and the mode, the
+  model and how hard it thinks are chosen from a list. **Dictate** writes
+  what you say into the field with a speech model that runs on your
+  computer: nothing is downloaded until you choose one for your language
+  (78 to 488 MB), and no sound leaves the machine. The agents are driven
+  through one protocol (`leon-turn`), which the phone app uses too. Off by
+  default; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#conversations-in-leons-own-interface-leon-turn-chat-uichatrs).
 * **History**: Claude Code, Codex and opencode sessions are imported from
   their own files into a local SQLite database and searched from the palette.
   A session missing from the tree? The palette's **Why is a session missing?**
@@ -162,8 +174,8 @@ interface.
 
 | OS | Prerequisites |
 | --- | --- |
-| macOS | Xcode command line tools (`xcode-select --install`) and the Metal toolchain that comes with Xcode |
-| Linux | A C toolchain and the development files for Wayland and X11, XKB and fontconfig: on Debian or Ubuntu `sudo apt install build-essential pkg-config libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev`, the packages CI installs; a GPU driver with Vulkan to run it. Adjust to the error your first build reports |
+| macOS | Xcode command line tools (`xcode-select --install`), the Metal toolchain that comes with Xcode, and `cmake` (`brew install cmake`) |
+| Linux | A C toolchain and the development files for Wayland and X11, XKB and fontconfig: on Debian or Ubuntu `sudo apt install build-essential pkg-config libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev cmake libclang-dev libasound2-dev`, the packages CI installs; a GPU driver with Vulkan to run it. Adjust to the error your first build reports |
 | Windows | Visual Studio Build Tools with the C++ workload and the Windows SDK. Terminals use ConPTY (Windows 10 1809 or newer). Remote hosts must have a POSIX shell. |
 
 ```sh
@@ -564,6 +576,7 @@ platform (see below).
 | Paste | `⌘V` `⇧⌘V` `⇧Insert` | `Ctrl+V` `Ctrl+Shift+V` `Shift+Insert` |
 | Scroll the terminal back a page | `⇧PgUp` | `Shift+PgUp` |
 | Scroll the terminal forward a page | `⇧PgDn` | `Shift+PgDn` |
+| Dictate into the conversation | palette only | palette only |
 | **Data** | | |
 | Import history and sync worktrees | `⌘R` | `Ctrl+R` |
 | Probe the machine on screen | `⇧⌘R` | `Ctrl+Shift+R` |

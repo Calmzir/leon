@@ -175,36 +175,6 @@ pub(crate) fn safe_tag(tag: &str) -> String {
         .collect()
 }
 
-/// A tag made of `kind` and an id of the agent's, reversible whatever the id
-/// holds: an id that is not plain is written in hexadecimal after `x`.
-pub(crate) fn id_tag(kind: char, id: &str) -> String {
-    let plain = !id.is_empty()
-        && !id.starts_with('x')
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    if plain {
-        return format!("{kind}.{id}");
-    }
-    let hex: String = id.bytes().map(|byte| format!("{byte:02x}")).collect();
-    format!("{kind}.x{hex}")
-}
-
-/// The id inside a tag written by [`id_tag`] for `kind`.
-pub(crate) fn tag_id(kind: char, tag: &str) -> Option<String> {
-    let rest = tag.strip_prefix(kind)?.strip_prefix('.')?;
-    let Some(hex) = rest.strip_prefix('x') else {
-        return Some(rest.to_owned());
-    };
-    if hex.len() % 2 != 0 {
-        return None;
-    }
-    let bytes: Option<Vec<u8>> = (0..hex.len() / 2)
-        .map(|at| u8::from_str_radix(hex.get(at * 2..at * 2 + 2)?, 16).ok())
-        .collect();
-    String::from_utf8(bytes?).ok()
-}
-
 /// What the bridge says on the terminal's output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Mark {
@@ -337,6 +307,7 @@ mod tests {
 
     #[test]
     fn a_tag_holds_nothing_a_terminal_line_could_not() {
+        use leon_turn::tag::{id_tag, tag_id};
         assert_eq!(safe_tag("a.b c\n;$(x)"), "a.b_c____x_");
         assert_eq!(id_tag('a', "0f3c-11"), "a.0f3c-11");
         assert_eq!(tag_id('a', "a.0f3c-11").as_deref(), Some("0f3c-11"));

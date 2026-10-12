@@ -65,6 +65,7 @@ impl Shell {
             .ids()
             .into_iter()
             .filter_map(|id| self.history_of_live(id))
+            .chain(self.chats.values().filter_map(|chat| chat.history.clone()))
             .collect()
     }
 

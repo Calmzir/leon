@@ -343,6 +343,43 @@ const OPEN_MODES: Choices = Choices::Fixed(&[
     ("resume", "Resume in a terminal"),
     ("transcript", "Open the transcript"),
 ]);
+/// The languages of dictation: the system's own, whichever is heard, then
+/// those of `leon_voice::catalog::LANGUAGES`, which a test holds this to.
+const DICTATION_LANGUAGES: Choices = Choices::Fixed(&[
+    ("system", "The system's"),
+    ("auto", "Whichever is heard"),
+    ("ar", "Arabic"),
+    ("ca", "Catalan"),
+    ("zh", "Chinese"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("nl", "Dutch"),
+    ("en", "English"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("no", "Norwegian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("es", "Spanish"),
+    ("sv", "Swedish"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi", "Vietnamese"),
+]);
+const INTERFACES: Choices =
+    Choices::Fixed(&[("terminal", "Terminal"), ("chat", "Leon's own (beta)")]);
 const RESTORE: Choices =
     Choices::Fixed(&[("ask", "Ask me"), ("always", "Always"), ("never", "Never")]);
 const RESTORE_RESUME: Choices = Choices::Fixed(&[("shown", "When shown"), ("all", "All at once")]);
@@ -646,6 +683,42 @@ const BASE: &[Def] = &[
         D::Bool(true),
     ),
     // ----- agents
+    only(
+        def(
+            "agent_interface",
+            S::Agents,
+            "Agent interface",
+            "Where a session of Claude Code, Codex or opencode runs: in a terminal, with the agent's own program, or in Leon's own interface, a conversation that looks and works the same for every agent. Leon's own is in beta: sessions on this computer only, and an agent it cannot drive starts in a terminal as before. Takes effect for sessions started after it is changed.",
+            "chat conversation unified native interface beta protocol terminal tui messages permissions",
+            K::Choice(INTERFACES),
+            D::Text("terminal"),
+        ),
+        Platform::Unix,
+    ),
+    only(
+        def(
+            "dictation_language",
+            S::Agents,
+            "Dictation language",
+            "The language you speak when you dictate into a conversation of Leon's own interface. It decides which speech models are offered: English has models of its own, every other language shares the ones that know many. `Whichever is heard` lets the model tell, which is slower and sometimes wrong for a short sentence. Nothing is downloaded until you choose a model, and what you say stays on this computer.",
+            "voice speech microphone dictate talk speak language whisper model transcribe",
+            K::Choice(DICTATION_LANGUAGES),
+            D::Text("system"),
+        ),
+        Platform::Unix,
+    ),
+    only(
+        def(
+            "dictation_model",
+            S::Agents,
+            "Dictation model",
+            "The speech model dictation uses: `tiny`, `base` or `small`, with `.en` for the ones that know only English. Set by the list the Dictate button or `/voice` opens, which downloads the model first. Empty, or a model that is not on this computer: the most accurate one that is.",
+            "voice speech microphone dictate whisper model download tiny base small",
+            K::Text { placeholder: "The most accurate installed" },
+            D::Text(""),
+        ),
+        Platform::Unix,
+    ),
     def(
         "history_open",
         S::Agents,
@@ -1987,6 +2060,16 @@ pub fn render_docs() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_languages_of_dictation_are_the_catalogues_after_the_two_that_name_none() {
+        let super::Choices::Fixed(offered) = super::DICTATION_LANGUAGES else {
+            panic!("the languages of dictation are a fixed list");
+        };
+        assert_eq!(offered[0].0, "system");
+        assert_eq!(offered[1].0, "auto");
+        assert_eq!(&offered[2..], leon_voice::catalog::LANGUAGES);
+    }
+
     #[test]
     fn the_usage_network_sources_are_on_by_default_and_the_refresh_is_ten_minutes() {
         let store = Store::new();

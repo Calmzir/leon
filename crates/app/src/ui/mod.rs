@@ -16,6 +16,10 @@
 mod activity;
 mod changes;
 mod changes_view;
+mod chat;
+mod chat_menu;
+mod chat_view;
+mod chat_voice;
 mod checkout;
 mod connect;
 mod connect_view;

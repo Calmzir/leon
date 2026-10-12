@@ -49,6 +49,13 @@ leon-term.workspace = true
 leon-usage.workspace = true
 leon-memory.workspace = true
 leon-update.workspace = true
+# The unified agent protocol: how conversations in Leon's own interface are
+# driven (see `src/chat`).
+leon-turn.workspace = true
+# Dictation into a conversation's field: the models there are and the ones
+# on this computer. The microphone and the model itself come with the
+# feature `engine`, below, where conversations exist.
+leon-voice.workspace = true
 
 chrono.workspace = true
 flume.workspace = true
@@ -71,6 +78,9 @@ tracing-subscriber.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+# The microphone and whisper.cpp: they need cmake, a C++ compiler and
+# libclang to build, asked only of the systems that have conversations.
+leon-voice = { workspace = true, features = ["engine"] }
 
 # The Dock icon of an unbundled run: the Objective-C bridge GPUI already uses.
 [target.'cfg(target_os = "macos")'.dependencies]

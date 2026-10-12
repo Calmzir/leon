@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Added
+
+* One interface for every agent, in beta. With the new setting **Agent
+  interface** on *Leon's own*, a session of Claude Code, Codex or opencode on
+  this computer is a conversation in Leon's own interface instead of the
+  agent's program in a terminal: what you wrote, the agent's answer as
+  Markdown, its steps folded into a line that opens, and its questions
+  (permissions with the change shown, choices, plans) answered with a click
+  or with `Enter`. `Escape` stops the turn. In the field, `/` lists
+  the commands (`/model`, `/effort`, `/mode`, then the agent's own commands
+  and skills), `@` lists the files of the folder to name one, and the chips
+  under it open a list of the agent's own modes, its models and how hard the
+  model in use can be told to think, which typing narrows.
+* Dictation in those conversations: **Dictate**, at the right of the field
+  (or the command of that name, which has no chord until you give it one),
+  opens the microphone; `Enter` or the button again writes what you said
+  where the cursor is, to read before you send it, and `Escape` drops it.
+  The speech model runs on your computer (whisper.cpp) and nothing leaves
+  it. No model comes with Leon: the first time, the button lists the ones
+  for your language (English has its own, every other language shares the
+  ones that know many; 78 to 488 MB) and downloads the one you choose, held
+  to a checksum; `/voice` opens that list again. The settings *Dictation
+  language* and *Dictation model* say which language you speak and which
+  model is used. Building Leon on macOS and Linux now needs `cmake`, a C++
+  compiler and libclang, and on Linux the ALSA development files. Sessions on other machines and
+  custom agents start in a terminal as before. The setting is off by default.
+* `leon-turn`, Leon's unified agent protocol: the one place that knows how
+  each agent is driven, reduced to the same turn, events and questions for
+  all of them. The desktop's conversations and the phone app both use it.
+
+### Fixed
+
+* A window that came up from **Restart to update** no longer passes the mark
+  of that restart on to what it starts. Every terminal in it carried
+  `LEON_WAIT_FOR_PARENT`, so a second Leon started from one of those shells
+  sat for twenty seconds waiting on the keyboard before it opened.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added

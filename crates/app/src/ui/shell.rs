@@ -209,6 +209,12 @@ pub struct Options {
     /// Where terminals come from: a real PTY, or a scripted stand-in in tests
     /// of what Leon does with a terminal rather than of the terminal.
     pub backend: Rc<dyn Backend>,
+    /// Where the agent of a conversation comes from: a process on a pipe,
+    /// or a scripted stand-in in tests.
+    pub chat_spawner: Arc<dyn crate::chat::turn::Spawner>,
+    /// Dictation: the speech models on this computer, the microphone and
+    /// what makes text of it, or a scripted stand-in in tests.
+    pub voice: Arc<dyn crate::voice::Voice>,
     /// When a new shell is ready for an agent's command line.
     pub ready: Readiness,
     /// How a worktree's activity dot reads its terminals.
@@ -336,6 +342,8 @@ impl Default for Options {
             reveal: Rc::new(|cx, path| cx.reveal_path(path)),
             den_cast: 0,
             backend: Rc::new(Pty::default()),
+            chat_spawner: Arc::new(crate::chat::turn::Piped),
+            voice: Arc::new(crate::voice::Unavailable),
             ready: Readiness::default(),
             activity: Thresholds::default(),
             error_flash: Duration::from_secs(4),
@@ -488,6 +496,13 @@ pub struct Shell {
     /// The files open in leaves, by the id of their leaf (allocated with the
     /// terminals' counter). A leaf that has an entry here is not a terminal.
     pub(super) files: std::collections::HashMap<LiveId, super::editor::EditorDoc>,
+    /// The conversations open in leaves, by the id of their leaf (allocated
+    /// with the terminals' ids): sessions that run in Leon's own interface
+    /// instead of in a terminal.
+    pub(super) chats: std::collections::HashMap<LiveId, super::chat::Chat>,
+    /// Dictation into a conversation's field: one microphone, so one for
+    /// the window.
+    pub(super) dictation: super::chat_voice::Dictating,
     /// The changes tabs open in leaves, by the id of their leaf: like a file,
     /// a leaf with an entry here is not a terminal.
     pub(super) changes: std::collections::HashMap<LiveId, super::changes::ChangesView>,
@@ -856,6 +871,8 @@ impl Shell {
             main: Main::Empty,
             live: Sessions::default(),
             files: std::collections::HashMap::new(),
+            chats: std::collections::HashMap::new(),
+            dictation: Default::default(),
             changes: std::collections::HashMap::new(),
             file_tree: Default::default(),
             workspaces: Workspaces::default(),
@@ -1095,6 +1112,7 @@ impl Shell {
                 self.live.get(*id).is_none()
                     && !self.files.contains_key(id)
                     && !self.changes.contains_key(id)
+                    && !self.chats.contains_key(id)
             }
             Main::Empty | Main::Session(_) | Main::Den | Main::Tasks => false,
         };
@@ -1110,8 +1128,12 @@ impl Shell {
                 self.fill_palette(cx);
             }
         }
-        // A session that was just imported may be the id a terminal waits for.
+        // A session that was just imported may be the id a terminal waits for,
+        // or the one a conversation's agent wrote.
         self.learn_session_ids(cx);
+        if self.link_chats() {
+            self.refresh_live();
+        }
         cx.notify();
     }
 
@@ -1153,8 +1175,30 @@ impl Shell {
         }
     }
 
+    /// The conversations as the tree sees them: sessions like the terminals',
+    /// oldest first.
+    fn chat_entries(&self) -> Vec<LiveEntry> {
+        let mut ids: Vec<LiveId> = self.chats.keys().copied().collect();
+        ids.sort_by_key(|id| id.0);
+        ids.into_iter()
+            .filter(|id| self.workspaces.lead_of(*id).is_none_or(|lead| lead == *id))
+            .map(|id| {
+                let chat = &self.chats[&id];
+                LiveEntry {
+                    id,
+                    machine: chat.machine.clone(),
+                    cwd: chat.cwd.clone(),
+                    agent: Some(chat.agent),
+                    account: chat.account.clone(),
+                    history: chat.history.clone(),
+                    asleep: None,
+                }
+            })
+            .collect()
+    }
+
     /// The live sessions as the tree sees them: one per workspace, then the
-    /// sleeping ones.
+    /// conversations, then the sleeping ones.
     fn live_entries(&self) -> Vec<LiveEntry> {
         // A session has one row, its first terminal's: its other tabs are
         // shells in it, not sessions.
@@ -1175,6 +1219,7 @@ impl Shell {
                 history: session.history.clone(),
                 asleep: None,
             })
+            .chain(self.chat_entries())
             .chain(Self::dormant_entries(&self.dormant))
             .collect()
     }
@@ -1221,6 +1266,7 @@ impl Shell {
             Kind::Session(session) => {
                 self.placement.merged.contains(&session.id)
                     || self.live.of_history(&session.id).is_some()
+                    || self.chat_of_history(&session.id).is_some()
                     || self.elsewhere_of(session).is_some()
                     // What the person put on a shelf is kept in sight there,
                     // however the sidebar lists the rest.
@@ -2031,7 +2077,8 @@ impl Shell {
                 .get(*id)
                 .map(|session| session.machine.clone())
                 .or_else(|| self.files.get(id).map(|doc| doc.machine.clone()))
-                .or_else(|| self.changes.get(id).map(|view| view.target.machine.clone())),
+                .or_else(|| self.changes.get(id).map(|view| view.target.machine.clone()))
+                .or_else(|| self.chats.get(id).map(|chat| chat.machine.clone())),
             Main::Empty | Main::Den | Main::Tasks => None,
         };
         let found = if self.pane == Pane::Sidebar {
@@ -2106,10 +2153,13 @@ impl Shell {
                         Some(view.target.project.clone()),
                         view.target.path.clone(),
                     )),
-                    (None, None) => {
-                        let session = self.live.get(*id)?;
-                        Some((session.machine.clone(), None, session.cwd.clone()))
-                    }
+                    (None, None) => match self.chats.get(id) {
+                        Some(chat) => Some((chat.machine.clone(), None, chat.cwd.clone())),
+                        None => {
+                            let session = self.live.get(*id)?;
+                            Some((session.machine.clone(), None, session.cwd.clone()))
+                        }
+                    },
                 },
                 Main::Tasks => {
                     let id = self.tasks_ui.project.clone()?;
@@ -2742,6 +2792,14 @@ impl Shell {
         {
             return true;
         }
+        // The conversation on screen has its own keys: the list over its
+        // field, and Escape, which stops its turn.
+        if self.overlay == Overlay::None
+            && self.pane == Pane::Main
+            && self.chat_key(stroke, window, cx)
+        {
+            return true;
+        }
         if self.overlay == Overlay::Pair && self.pair_key(stroke, window, cx) {
             return true;
         }
@@ -2777,6 +2835,7 @@ impl Shell {
             || finding
             || self.file_has_keyboard()
             || self.changes_typing(window, cx)
+            || self.chat_typing(window, cx)
             || self.tasks_typing(window, cx);
         if self.overlay == Overlay::Palette && self.palette_key(stroke, window, cx) {
             return true;
@@ -2919,6 +2978,11 @@ impl Shell {
                     self.close_changes(id, window, cx);
                 }
             }
+            C::CloseSession if self.focused_chat().is_some() => {
+                if let Some(id) = self.focused_chat() {
+                    self.close_chat(id, window, cx);
+                }
+            }
             C::ContextMenu => self.open_menu_here(window, cx),
             C::Rename
             | C::RemoveMachine
@@ -3028,6 +3092,11 @@ impl Shell {
             }
             C::OpenDensFolder => self.open_dens_folder(cx),
             C::RefreshUsage => self.refresh_usage(cx),
+            C::Dictate => {
+                if let Some(id) = self.focused_chat() {
+                    self.chat_dictate(id, window, cx);
+                }
+            }
             C::WhyMissing => self.open_history_report(window, cx),
             C::RestoreSessions => self.restore_last_sessions(window, cx),
             C::Refresh => self.engine.submit(crate::engine::Op::Refresh),
