@@ -21,6 +21,7 @@ leon-history ── leon-core
 leon-usage ── leon-core, leon-remote
 leon-memory ── leon-core
 leon-update ── leon-remote (only for `spawn`)
+leon-mobile ── leon-link, leon-wire (the phone's library; not part of the app)
 leon-term ── gpui-kit only (no other Leon crate)
 leon-mark ── gpui-kit only (no other Leon crate)
 leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3d`
@@ -28,7 +29,7 @@ leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3
 
 | Crate | What it is |
 | --- | --- |
-| `leon-core` | Machines, projects, worktrees, sessions and messages, and the `Store` (SQLite) with change notification. No UI, no processes. |
+| `leon-core` | Machines, projects, worktrees, sessions and messages, the shared memory's entries (`store/memory.rs`), the board's tasks (`store/tasks.rs`) and the `Store` (SQLite) with change notification. No UI, no processes. |
 | `leon-history` | Reads the history Claude Code, Codex and opencode keep on disk and turns it into sessions and messages. |
 | `leon-remote` | A `CommandSpec` says what to run and where; `run_on` and `interactive_on` place it on a machine (unchanged locally, `ssh` remotely, with shell quoting and optional connection sharing). Git worktree operations, the changed files and diffs of a checkout and the commit, push and pull request (`changes`, `ship`), how each agent starts and resumes, the machine probe and the connection checklist (`connect`, `diagnosis`) are built on it. A scripted runner makes all of it testable without a process. |
 | `leon-usage` | How much of each agent's limits is left. A provider-neutral model (`AgentUsage`: windows with a used percentage, a reset time and a length, or an explicit `Reason` why nothing is known; staleness is part of it), pure parsers for each source (`codex`, `claude`, `opencode`), the burn-rate `forecast`, the wording (`present`, `view`), `collect_machine` (one bounded command per machine through a `Runner`) and the opt-in `network` sources behind an `Http` trait. No UI. |
@@ -36,6 +37,7 @@ leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3
 | `leon-update` | Updates from the GitHub releases of this repository. `version` (which tags count, which is newer), `release` (the API's answer, the platform's file), `http` (an `Http` trait and the system `curl` behind it, with the host allow-list), `download` (redirects by hand, resumable, bounded), `checksums` (`SHA256SUMS`, constant-time), `package` (the program out of the dmg, tarball or zip, strictly), `trust` (the signature rules), `install` (where Leon is installed and the swap with its way back), `launch` (the hand-over, the watch, the confirmation, the rollback), `updater` (the state machine published over a watch channel) and `state` (what is kept). No UI; every system tool (`hdiutil`, `ditto`, `codesign`, PowerShell) is behind a `Tools` trait. |
 | `leon-wire` | The wire protocol: versioned length-prefixed frames, the application messages (run a command, terminals, re-attach) and the relay rendezvous messages. Pure (`postcard` over `serde`); every decoder is bounded and fuzz-style tested. |
 | `leon-link` | Everything that keeps a remote session private: identity, the short pairing code (SPAKE2 then Noise `XXpsk3`), the Noise `IK` session with fragmentation and rekeying, the device registry, the relay WebSocket adapter, the durable `Client` (reconnection, exact terminal re-attach) and, behind `test-support`, an in-process test relay. |
+| `leon-mobile` | Leon for phones, exported with UniFFI (the React Native package in `mobile/modules/leon-link-native` is generated from it). The application itself is `mobile/` (Expo, TypeScript; see `mobile/README.md`): it reaches this crate only through `mobile/src/link`, and is outside the Cargo workspace. `mobile` (identity, pairing, connecting), `session` (shared state, transcripts, turns), `agents` (the command line of one headless turn of each agent, started through the owner's login shell) and `events` (the agent's JSON lines reduced to the events a chat shows). A turn runs in a host terminal, so it streams, survives a dropped connection and can be re-attached; the host needs nothing new. |
 | `leon-pty` | The GPUI-free part of terminals: `SpawnSpec`, grid maths and `PtyProcess` (a child in a pseudo-terminal driven by channels). `leon-term` re-exports it. |
 | `leon-host` | The sharing service: executes commands, owns durable terminals with a replay ring, serves pairing and sessions through a relay, reconnects, cuts off revoked devices; the `leon host` command line. Also the keeper of durable local sessions (`keeper`): the same terminal table behind a Unix socket instead of a relay (see "Durable local sessions"). |
 | `leon-term` | A terminal for GPUI: `Terminal` (PTY, emulator, child) and `TerminalView` (the GPUI entity). Depends on `gpui-kit` and nothing of Leon; the application maps its own command type onto `SpawnSpec`. |
@@ -134,7 +136,7 @@ module. See `docs/REMOTE.md` for the security model.
    README lists each one.
 5. **Pure first.** What can be decided without a window is a pure function with
    tests: the tree (`ui/tree.rs`), the palette's questions (`ui/steps.rs`), what
-   a session runs (`launch::plan`), the shared memory's file, block and MCP
+   a session runs (`launch::plan`), the board's MCP answers (`task_mcp`) and command line (`task_cli::parse`), the shared memory's file, block and MCP
    answers (`leon-memory`), key to bytes (`leon_term::keys`), cells to
    runs (`leon_term::layout`), resize maths (`leon_term::size`).
 6. **English everywhere, prose `//!` header on every file.**

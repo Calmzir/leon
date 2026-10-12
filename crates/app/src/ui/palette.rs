@@ -353,6 +353,10 @@ impl Shell {
             self.overlay = Overlay::Settings;
             self.settings_focus(window, cx);
         }
+        // So is one asked from the board of tasks.
+        if std::mem::take(&mut self.tasks_ui.return_from_palette) {
+            self.return_to_tasks(window, cx);
+        }
         cx.notify();
     }
 
@@ -1381,6 +1385,8 @@ impl Shell {
             Action::NewTheme(name) => self.create_theme(&name, cx),
             Action::SetDen(id) => self.den_choose(&id, cx),
             Action::SaveDenAs(name) => self.den_save_as(&name, cx),
+            Action::NewTask(title) => self.new_task(&title, cx),
+            Action::StartTask(agent) => self.start_task_work(agent, window, cx),
             Action::RenameDen(name) => self.den_rename(&name, cx),
             Action::DeleteDen => self.den_delete(cx),
             Action::AddAgent {

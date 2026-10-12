@@ -2,7 +2,7 @@
 //!
 //! The home is what the main pane shows when nothing is open
 //! ([`Main::Empty`]). It is reached from anywhere: the pinned "Home" row over
-//! the tree of the sidebar, the command "Go home", its chord. Going home
+//! the tree of the sidebar (with the board of tasks and the Den under it), the command "Go home", its chord. Going home
 //! closes nothing: the terminals go on running and stay in the sidebar.
 //!
 //! It holds, top to bottom:
@@ -75,18 +75,21 @@ pub struct HomeUi {
 pub enum Nav {
     /// The home.
     Home,
+    /// The board of tasks.
+    Tasks,
     /// The Den.
     Den,
 }
 
 impl Nav {
     /// The rows, top to bottom.
-    pub const ALL: [Nav; 2] = [Nav::Home, Nav::Den];
+    pub const ALL: [Nav; 3] = [Nav::Home, Nav::Tasks, Nav::Den];
 
     /// Its name.
     pub fn label(self) -> &'static str {
         match self {
             Nav::Home => "Home",
+            Nav::Tasks => "Tasks",
             Nav::Den => "The Den",
         }
     }
@@ -95,6 +98,7 @@ impl Nav {
     pub fn command(self) -> Command {
         match self {
             Nav::Home => Command::GoHome,
+            Nav::Tasks => Command::ShowTasks,
             Nav::Den => Command::ShowDen,
         }
     }
@@ -104,8 +108,10 @@ impl Nav {
     pub fn step(self, up: bool) -> Option<Nav> {
         match (self, up) {
             (Nav::Home, true) => Some(Nav::Home),
-            (Nav::Home, false) => Some(Nav::Den),
-            (Nav::Den, true) => Some(Nav::Home),
+            (Nav::Home, false) => Some(Nav::Tasks),
+            (Nav::Tasks, true) => Some(Nav::Home),
+            (Nav::Tasks, false) => Some(Nav::Den),
+            (Nav::Den, true) => Some(Nav::Tasks),
             (Nav::Den, false) => None,
         }
     }
@@ -448,6 +454,12 @@ impl Shell {
     pub(super) fn open_nav(&mut self, nav: Nav, window: &mut Window, cx: &mut Context<Self>) {
         match nav {
             Nav::Home => self.go_home(window, cx),
+            Nav::Tasks => {
+                // An overlay over whatever is open: the keyboard stays on
+                // its row for when it is closed.
+                self.home.nav = Some(Nav::Tasks);
+                self.toggle_tasks(window, cx);
+            }
             Nav::Den => {
                 if !self.den_open() {
                     self.toggle_den(window, cx);
@@ -504,6 +516,7 @@ impl Shell {
             let on = self.home.nav == Some(row);
             let (selector, glyph) = match row {
                 Nav::Home => ("sidebar-home", IconName::House),
+                Nav::Tasks => ("sidebar-tasks", IconName::SquareKanban),
                 Nav::Den => ("sidebar-den", IconName::PawPrint),
             };
             let tip: SharedString = super::sidebar::tooltip_text(row.command()).into();

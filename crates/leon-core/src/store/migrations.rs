@@ -26,7 +26,8 @@ use crate::error::{Result, StoreError};
 /// public schema is version 3, so version 4 never existed in the wild and this
 /// order (usage, then relay) is the one every database goes through.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
+    V22,
 ];
 
 const V1: &str = r#"
@@ -472,6 +473,112 @@ WHEN old.title IS NOT new.title OR old.text IS NOT new.text BEGIN
 END;
 "#;
 
+/// Version 20: the board. A task belongs to a scope exactly as a memory entry
+/// does (the identity of a project's root, or the global marker), so every
+/// worktree of a project shares one board. `status` is one of the board's
+/// columns and `position` orders the cards inside a column (a real number, so
+/// a card goes between two others without renumbering them). `labels` are
+/// lower-case words joined by newlines. `assignee` is a person or an agent
+/// tag; `agent` is who created the task, when known. `title_hash` is of the
+/// title without its case and spacing: what tells that a task was created
+/// before. `closed_at` is set while the status is done or canceled.
+/// `task_fts` follows the pattern of version 19.
+const V20: &str = r#"
+CREATE TABLE task (
+    pk         INTEGER PRIMARY KEY,
+    id         TEXT NOT NULL UNIQUE,
+    scope      TEXT NOT NULL,
+    root       TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL,
+    priority   INTEGER NOT NULL DEFAULT 0,
+    position   REAL NOT NULL,
+    labels     TEXT NOT NULL DEFAULT '',
+    assignee   TEXT,
+    agent      TEXT,
+    title_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    closed_at  INTEGER
+);
+CREATE INDEX task_by_scope ON task (scope, status, position);
+CREATE INDEX task_by_hash ON task (scope, title_hash);
+
+CREATE VIRTUAL TABLE task_fts USING fts5(
+    title,
+    body,
+    content = 'task',
+    content_rowid = 'pk',
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER task_fts_insert AFTER INSERT ON task BEGIN
+    INSERT INTO task_fts (rowid, title, body) VALUES (new.pk, new.title, new.body);
+END;
+CREATE TRIGGER task_fts_delete AFTER DELETE ON task BEGIN
+    INSERT INTO task_fts (task_fts, rowid, title, body)
+    VALUES ('delete', old.pk, old.title, old.body);
+END;
+CREATE TRIGGER task_fts_update AFTER UPDATE OF title, body ON task
+WHEN old.title IS NOT new.title OR old.body IS NOT new.body BEGIN
+    INSERT INTO task_fts (task_fts, rowid, title, body)
+    VALUES ('delete', old.pk, old.title, old.body);
+    INSERT INTO task_fts (rowid, title, body) VALUES (new.pk, new.title, new.body);
+END;
+"#;
+
+/// Version 21: the branch of the worktree made for a task, when work was
+/// started on it from the board. `NULL` for every task there is, and for any
+/// that has no worktree.
+const V21: &str = r#"
+ALTER TABLE task ADD COLUMN branch TEXT;
+"#;
+
+/// Version 22: the link between a task and an issue of a tracker, and which
+/// projects are synced. `task_link` is one row per issue: `(provider, repo,
+/// number)` is unique, so an issue is linked to one task at most. `task_id`
+/// is `NULL` for a tombstone, an issue whose task was deleted or unlinked
+/// here: it is remembered so that a sync does not import it again. The `base_*`
+/// columns are what the task and the issue said at the last sync, the common
+/// ancestor a three-way merge needs; `remote_updated_at` is the issue's own
+/// `updatedAt`, as the tracker wrote it. `body_cut` marks a task whose body is
+/// a cut of the issue's, which must never be written back.
+///
+/// `task_sync` is one row per project that is synced: its scope (as a memory
+/// entry's), the repository the person confirmed, and how the last run went.
+const V22: &str = r#"
+CREATE TABLE task_link (
+    pk                INTEGER PRIMARY KEY,
+    provider          TEXT NOT NULL,
+    repo              TEXT NOT NULL,
+    number            INTEGER NOT NULL,
+    url               TEXT NOT NULL,
+    task_id           TEXT,
+    base_title        TEXT NOT NULL,
+    base_body         TEXT NOT NULL,
+    base_status       TEXT NOT NULL,
+    base_priority     INTEGER NOT NULL DEFAULT 0,
+    base_labels       TEXT NOT NULL DEFAULT '',
+    remote_updated_at TEXT NOT NULL DEFAULT '',
+    body_cut          INTEGER NOT NULL DEFAULT 0,
+    synced_at         INTEGER NOT NULL,
+    UNIQUE (provider, repo, number)
+);
+CREATE INDEX task_link_by_task ON task_link (task_id);
+
+CREATE TABLE task_sync (
+    scope       TEXT PRIMARY KEY,
+    root        TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    repo        TEXT NOT NULL,
+    enabled_at  INTEGER NOT NULL,
+    last_run_at INTEGER,
+    last_ok_at  INTEGER,
+    last_error  TEXT
+) WITHOUT ROWID;
+"#;
+
 /// Brings the database up to the latest schema version.
 pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
     let supported = MIGRATIONS.len() as u32;
@@ -883,6 +990,102 @@ mod tests {
             )
             .unwrap();
         assert_eq!(found, 1);
+    }
+
+    #[test]
+    fn a_version_19_database_gains_the_task_tables_and_keeps_its_memory() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        for (index, sql) in MIGRATIONS[..19].iter().enumerate() {
+            connection.execute_batch(sql).unwrap();
+            connection
+                .pragma_update(None, "user_version", index as u32 + 1)
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO memory (id, scope, root, kind, title, text, text_hash,
+                                     created_at, updated_at, last_seen_at)
+                 VALUES ('m', '/srv/api', '/srv/api', 'note', 't', 'x', 'h', 1, 1, 1);",
+            )
+            .unwrap();
+        migrate(&mut connection).unwrap();
+        assert_eq!(version(&connection), MIGRATIONS.len() as u32);
+        let memories: i64 = connection
+            .query_row("SELECT count(*) FROM memory", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(memories, 1);
+        // The board is there, empty, with its index in step.
+        connection
+            .execute_batch(
+                "INSERT INTO task (id, scope, root, title, status, position, title_hash,
+                                   created_at, updated_at)
+                 VALUES ('t', '/srv/api', '/srv/api', 'Ship it', 'todo', 1, 'h', 1, 1);",
+            )
+            .unwrap();
+        let found: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM task_fts WHERE task_fts MATCH 'ship'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(found, 1);
+    }
+
+    #[test]
+    fn a_version_20_database_gains_the_branch_of_a_task_and_keeps_its_tasks() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        for (index, sql) in MIGRATIONS[..20].iter().enumerate() {
+            connection.execute_batch(sql).unwrap();
+            connection
+                .pragma_update(None, "user_version", index as u32 + 1)
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO task (id, scope, root, title, status, position, title_hash,
+                                   created_at, updated_at)
+                 VALUES ('t', '/srv/api', '/srv/api', 'Ship it', 'todo', 1, 'h', 1, 1);",
+            )
+            .unwrap();
+        migrate(&mut connection).unwrap();
+        assert_eq!(version(&connection), MIGRATIONS.len() as u32);
+        let branch: Option<String> = connection
+            .query_row("SELECT branch FROM task WHERE id = 't'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(branch, None);
+    }
+
+    #[test]
+    fn a_version_21_database_gains_the_link_and_sync_tables_and_keeps_its_tasks() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        for (index, sql) in MIGRATIONS[..21].iter().enumerate() {
+            connection.execute_batch(sql).unwrap();
+            connection
+                .pragma_update(None, "user_version", index as u32 + 1)
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO task (id, scope, root, title, status, position, title_hash,
+                                   created_at, updated_at)
+                 VALUES ('t', '/srv/api', '/srv/api', 'Ship it', 'todo', 1, 'h', 1, 1);",
+            )
+            .unwrap();
+        migrate(&mut connection).unwrap();
+        assert_eq!(version(&connection), MIGRATIONS.len() as u32);
+        let tasks: i64 = connection
+            .query_row("SELECT count(*) FROM task", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(tasks, 1);
+        // An issue is linked to one task at most, per repository.
+        let link = "INSERT INTO task_link (provider, repo, number, url, base_title, base_body,
+                                           base_status, synced_at)
+                    VALUES ('github', 'o/r', 1, 'u', 't', '', 'todo', 1)";
+        connection.execute_batch(link).unwrap();
+        assert!(connection.execute_batch(link).is_err());
     }
 
     #[test]

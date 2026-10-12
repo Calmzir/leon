@@ -462,6 +462,8 @@ pub enum Main {
     Live(LiveId),
     /// The Den: every live agent session as a lion at work.
     Den,
+    /// The board of tasks.
+    Tasks,
 }
 
 /// The application window's view.
@@ -502,6 +504,7 @@ pub struct Shell {
     pub(super) connect_ui: super::connect::ConnectUi,
     /// The usage bar and view.
     pub(super) usage: super::usage_view::UsageUi,
+    pub(super) tasks_ui: super::tasks_view::TasksUi,
     pub(super) den: super::den_view::DenUi,
     /// Following the agents' transcripts for the sessions' lights.
     pub(super) status: super::transcript_watch::StatusUi,
@@ -516,6 +519,9 @@ pub struct Shell {
     pub(super) filter_input: Entity<InputState>,
     pub(super) filter_query: String,
     pub(super) filter: Option<Filter>,
+    /// The shortcuts sheet's search field and the text it holds.
+    pub(super) sheet_search: Entity<InputState>,
+    pub(super) sheet_query: String,
     /// What each project is called, where several share a name.
     pub(super) labels: std::collections::HashMap<ProjectId, String>,
     /// The project logos read from the store.
@@ -679,6 +685,8 @@ impl Shell {
         let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter projects"));
         let labels = filter::project_labels(&snapshot);
         let find_input = find::new_input(window, cx);
+        let sheet_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search the shortcuts"));
 
         let own_window = window.window_handle();
         let weak = cx.weak_entity();
@@ -710,6 +718,15 @@ impl Shell {
                     this.find_changed(cx);
                 }
             }),
+            cx.subscribe_in(
+                &sheet_search,
+                window,
+                |this, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.sheet_changed(cx);
+                    }
+                },
+            ),
             cx.subscribe_in(
                 &settings_ui.search,
                 window,
@@ -800,6 +817,10 @@ impl Shell {
                         }
                         // A project somebody just added may be asked about.
                         this.show_memory_offer(cx);
+                        // The board shows what the engine just wrote.
+                        if this.tasks_open() {
+                            this.tasks_reload();
+                        }
                         cx.notify()
                     })
                     .is_err()
@@ -843,6 +864,7 @@ impl Shell {
             settings_ui,
             connect_ui,
             usage: super::usage_view::UsageUi::default(),
+            tasks_ui: super::tasks_view::TasksUi::default(),
             den: super::den_view::DenUi::default(),
             status: super::transcript_watch::StatusUi::default(),
             home: super::home::HomeUi::default(),
@@ -852,6 +874,8 @@ impl Shell {
             filter_input,
             filter_query: String::new(),
             filter: None,
+            sheet_search,
+            sheet_query: String::new(),
             labels,
             logos: Logos::default(),
             history_scroll: ScrollHandle::new(),
@@ -1072,7 +1096,7 @@ impl Shell {
                     && !self.files.contains_key(id)
                     && !self.changes.contains_key(id)
             }
-            Main::Empty | Main::Session(_) | Main::Den => false,
+            Main::Empty | Main::Session(_) | Main::Den | Main::Tasks => false,
         };
         if gone {
             self.main = Main::Empty;
@@ -2008,7 +2032,7 @@ impl Shell {
                 .map(|session| session.machine.clone())
                 .or_else(|| self.files.get(id).map(|doc| doc.machine.clone()))
                 .or_else(|| self.changes.get(id).map(|view| view.target.machine.clone())),
-            Main::Empty | Main::Den => None,
+            Main::Empty | Main::Den | Main::Tasks => None,
         };
         let found = if self.pane == Pane::Sidebar {
             from_row().or_else(from_main)
@@ -2087,6 +2111,15 @@ impl Shell {
                         Some((session.machine.clone(), None, session.cwd.clone()))
                     }
                 },
+                Main::Tasks => {
+                    let id = self.tasks_ui.project.clone()?;
+                    let entry = self.snapshot.project(&id)?;
+                    Some((
+                        entry.project.machine_id.clone(),
+                        Some(id),
+                        entry.project.root.clone(),
+                    ))
+                }
                 Main::Empty | Main::Den => None,
             }
         };
@@ -2691,6 +2724,14 @@ impl Shell {
         {
             return true;
         }
+        // So is the board of tasks.
+        if self.overlay == Overlay::None
+            && self.pane == Pane::Main
+            && self.tasks_open()
+            && self.tasks_key(stroke, window, cx)
+        {
+            return true;
+        }
         // The changes tab has its own keys while it has the keyboard and no
         // field of it does.
         if self.overlay == Overlay::None
@@ -2705,6 +2746,9 @@ impl Shell {
             return true;
         }
         if self.overlay == Overlay::Share && self.share_key(stroke, window, cx) {
+            return true;
+        }
+        if self.overlay == Overlay::Shortcuts && self.sheet_key(stroke, window, cx) {
             return true;
         }
         // Escape closes the search bar of the editor, which has the keyboard
@@ -2728,10 +2772,12 @@ impl Shell {
                 | Overlay::Pair
                 | Overlay::AddProject
                 | Overlay::NewWorktree
+                | Overlay::Shortcuts
         ) || filtering
             || finding
             || self.file_has_keyboard()
-            || self.changes_typing(window, cx);
+            || self.changes_typing(window, cx)
+            || self.tasks_typing(window, cx);
         if self.overlay == Overlay::Palette && self.palette_key(stroke, window, cx) {
             return true;
         }
@@ -2960,6 +3006,20 @@ impl Shell {
             },
             C::Settings => self.open_settings(window, cx),
             C::ShowUsage => self.toggle_usage(window, cx),
+            C::ShowTasks => self.toggle_tasks(window, cx),
+            C::NewTask if self.tasks_open() => self.open_create(None, window, cx),
+            C::NewTask => self.begin_flow(command, window, cx),
+            C::StartTask => {
+                if self.tasks_open() && self.tasks_ui.board.selected().is_some() {
+                    self.tasks_ui.return_from_palette = true;
+                    self.begin_flow(command, window, cx);
+                } else {
+                    self.engine.report(
+                        crate::engine::StatusKind::Info,
+                        "Open the task board and select a task first.",
+                    );
+                }
+            }
             C::ShowDen => self.toggle_den(window, cx),
             C::GoHome => self.go_home(window, cx),
             C::EditDen => self.toggle_den_editor(window, cx),
@@ -3039,7 +3099,11 @@ impl Shell {
                     self.overlay = Overlay::Shortcuts;
                     self.sheet_scroll
                         .set_offset(gpui_kit::point(px(0.), px(0.)));
-                    self.focus.focus(window, cx);
+                    self.sheet_query.clear();
+                    self.sheet_search.update(cx, |field, cx| {
+                        field.set_value("", window, cx);
+                        field.focus(window, cx);
+                    });
                 }
             }
             C::Close => match self.overlay {
@@ -3107,6 +3171,7 @@ impl Shell {
                 self.overlay = Overlay::None;
                 self.focus.focus(window, cx);
             }
+
             Overlay::AddProject | Overlay::NewWorktree => {
                 self.overlay = Overlay::None;
                 self.new_worktree_ui = None;
@@ -3129,7 +3194,12 @@ impl Shell {
 
     /// Moves the cursor of the pane that has the keyboard (or scrolls the
     /// sheet, while it is open).
-    fn move_cursor(&mut self, command: Command, window: &mut Window, _cx: &mut Context<Self>) {
+    pub(super) fn move_cursor(
+        &mut self,
+        command: Command,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
         use Command as C;
         if matches!(self.overlay, Overlay::Shortcuts | Overlay::Problems) {
             let page = (self.viewport.height.as_f32() * 0.6).max(120.);
@@ -3506,6 +3576,9 @@ impl Shell {
                                 this.forget_row_drop();
                                 cx.notify();
                             }
+                            if this.forget_card_drop() {
+                                cx.notify();
+                            }
                         });
                     }
                 });
@@ -3517,6 +3590,10 @@ impl Shell {
                         released.update(cx, |this, cx| {
                             if this.row_drop_target.is_some() {
                                 this.finish_row_drop();
+                                cx.notify();
+                            }
+                            if this.tasks_ui.drop.is_some() || this.tasks_ui.dragging.is_some() {
+                                this.finish_card_drop();
                                 cx.notify();
                             }
                         });
@@ -3551,6 +3628,7 @@ impl Shell {
                     && !self.terminal_focused()
                     && !self.filter_focused(window, cx)
                     && !self.find_focused(window, cx)
+                    && !self.tasks_typing(window, cx)
             }
             _ => true,
         }
@@ -4061,6 +4139,10 @@ impl Render for Shell {
         self.watch_project_file();
         self.show_queued_trust(window, cx);
         // Terminals wear the theme and the interface size in use.
+        if !self.share_ui.started {
+            self.share_ui.started = true;
+            self.sync_share(cx);
+        }
         self.sync_settings(cx);
         self.sync_editor_prefs(window, cx);
         // The file tree follows the folder in view.

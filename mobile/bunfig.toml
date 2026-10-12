@@ -1,0 +1,5 @@
+# One flat node_modules for the app and modules/*: React Native's autolinking
+# and Expo's native modules must each exist exactly once, and bun's isolated
+# layout (its default for workspaces) installs a copy per peer set.
+[install]
+linker = "hoisted"

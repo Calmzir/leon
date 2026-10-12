@@ -1177,10 +1177,18 @@ mod tests {
         assert_eq!(store.session(&s3).unwrap().sort_order, Some(0));
         assert_eq!(store.session(&s1).unwrap().sort_order, Some(1));
         assert_eq!(store.session(&s2).unwrap().sort_order, None);
+        // The pinned sessions of the machine, in their order, up to a limit.
+        let pinned = |limit| -> Vec<SessionId> {
+            let found = store.pinned_sessions(&local(), limit).unwrap();
+            found.into_iter().map(|session| session.id).collect()
+        };
+        assert_eq!(pinned(10), vec![s3.clone(), s1.clone()]);
+        assert_eq!(pinned(1), vec![s3.clone()]);
 
         // An empty pin list unpins everything of the parent.
         store.pin_sessions(&scope, &[]).unwrap();
         assert_eq!(store.session(&s3).unwrap().sort_order, None);
+        assert!(store.pinned_sessions(&local(), 10).unwrap().is_empty());
 
         // A session of another project cannot be pinned here.
         let web = store.add_project(&local(), "web", "/srv/web").unwrap();

@@ -48,6 +48,7 @@ impl Shell {
             Main::Session(transcript) => self.render_transcript(transcript, colours, cx),
             Main::Live(id) => self.render_live(*id, colours, cx),
             Main::Den => self.render_den(colours, cx),
+            Main::Tasks => self.render_tasks(colours, cx),
         };
         let agent = self.main_agent();
         div()
@@ -176,7 +177,7 @@ impl Shell {
                 (None, None) => self.live.get(*id).map(|session| session.cwd.clone()),
             },
             Main::Session(transcript) => Some(transcript.session.cwd.clone()),
-            Main::Empty | Main::Den => None,
+            Main::Empty | Main::Den | Main::Tasks => None,
         };
         match path.filter(|path| !path.is_empty()).and_then(|path| {
             meta.split_once(&path)
@@ -221,6 +222,10 @@ impl Shell {
         match &self.main {
             Main::Empty => ("Home", "Home".to_owned(), self.home_headline()),
             Main::Den => self.den_heading(),
+            Main::Tasks => {
+                let (kind, title, meta) = self.tasks_heading();
+                (kind, title, meta)
+            }
             Main::Project(id) => match self.snapshot.project(id) {
                 Some(entry) => (
                     "Project",

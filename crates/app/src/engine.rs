@@ -50,6 +50,7 @@ use crate::files::{self, FileContent, FileEntry, FileError, FileRevision, GitMar
 use crate::project::{self, ProjectState};
 
 mod changes;
+mod task_sync;
 pub use changes::{CommitRequest, ShipReport, ShipRequest};
 
 /// How many folders are resolved with git at the same time while projects are
@@ -220,6 +221,82 @@ pub enum Op {
     WriteMemoryFile {
         /// The root of the project the terminal's folder belongs to.
         root: String,
+    },
+    /// Create a task on the board of a project of this computer, or on the
+    /// global one (`root` is `None`): what `leon task add` does. A task whose
+    /// title an open one already has is not created again.
+    AddTask {
+        /// The root of the project, or `None` for the global board.
+        root: Option<String>,
+        /// What is to be done.
+        title: String,
+        /// The column it starts in.
+        status: leon_core::TaskStatus,
+        /// What it is about; may be empty.
+        body: String,
+        /// How much it matters; none when absent.
+        priority: Option<leon_core::TaskPriority>,
+        /// Who is to do it.
+        assignee: Option<String>,
+        /// Its labels.
+        labels: Vec<String>,
+    },
+    /// Move a task to a column, above `before` when that is given.
+    MoveTask {
+        /// The task.
+        id: String,
+        /// The column.
+        status: leon_core::TaskStatus,
+        /// The task it is placed above.
+        before: Option<String>,
+    },
+    /// Work was started on a task: a worktree was made for it. Writes the
+    /// branch, the column `doing` and, when given, the assignee, and says so.
+    StartTask {
+        /// The task.
+        id: String,
+        /// The branch of the worktree made for it.
+        branch: String,
+        /// Who codes it, when nobody was given it already.
+        assignee: Option<String>,
+        /// What else is to be said in the line, such as why no setup ran.
+        notice: Option<String>,
+    },
+    /// Turn on syncing a project's tasks with the issues of the GitHub
+    /// repository the person confirmed: make the marker labels there,
+    /// remember the repository, sync once.
+    EnableTaskSync {
+        /// The project.
+        project: ProjectId,
+        /// The repository, as `owner/name`.
+        repo: String,
+    },
+    /// Turn syncing off for a project; the links stay and nothing is changed
+    /// on GitHub.
+    DisableTaskSync(ProjectId),
+    /// Sync the tasks of a project with its repository's issues.
+    SyncTasks(ProjectId),
+    /// Open a GitHub issue for one task and link it.
+    CreateIssue {
+        /// The task.
+        id: String,
+    },
+    /// Detach a task from its issue.
+    UnlinkTask {
+        /// The task.
+        id: String,
+    },
+    /// Remove a task for good.
+    DeleteTask {
+        /// The task.
+        id: String,
+    },
+    /// Change a task.
+    UpdateTask {
+        /// The task.
+        id: String,
+        /// What changes.
+        patch: leon_core::TaskPatch,
     },
     /// Give a project another name.
     RenameProject {
@@ -600,6 +677,8 @@ struct Inner {
     /// The roots (by identity) asked about since Leon started: "not now" is
     /// not asked again in the same run.
     memory_asked: Mutex<std::collections::HashSet<String>>,
+    /// One sync of tasks at a time.
+    task_sync_lock: tokio::sync::Mutex<()>,
     /// Which network sources are switched on.
     usage_policy: Mutex<leon_usage::network::NetworkPolicy>,
     /// How many jobs run on the blocking pool right now. They run on threads
@@ -677,6 +756,7 @@ impl Engine {
                 ),
                 memory_offer: std::sync::atomic::AtomicBool::new(false),
                 memory_asked: Mutex::new(std::collections::HashSet::new()),
+                task_sync_lock: tokio::sync::Mutex::new(()),
                 usage_policy: Mutex::new(leon_usage::network::NetworkPolicy::default()),
                 blocking: std::sync::atomic::AtomicUsize::new(0),
                 local_posix_shell: std::sync::atomic::AtomicBool::new(
@@ -1698,6 +1778,49 @@ impl Engine {
                 self.write_memory_file(None).await?;
                 Ok(None)
             }
+            Op::AddTask {
+                root,
+                title,
+                status,
+                body,
+                priority,
+                assignee,
+                labels,
+            } => {
+                let mut new = leon_core::NewTask::titled(
+                    match root {
+                        Some(root) => leon_core::MemoryScope::project(root),
+                        None => leon_core::MemoryScope::Global,
+                    },
+                    title,
+                );
+                new.status = Some(status);
+                new.body = body;
+                new.priority = priority;
+                new.assignee = assignee;
+                new.labels = labels;
+                self.add_task(&new).map(Some)
+            }
+            Op::MoveTask { id, status, before } => {
+                self.move_task(&id, status, before.as_deref()).map(Some)
+            }
+            Op::UpdateTask { id, patch } => self.update_task(&id, &patch).map(Some),
+            Op::DeleteTask { id } => self.delete_task(&id).map(Some),
+            Op::EnableTaskSync { project, repo } => {
+                self.enable_task_sync(&project, &repo).await.map(Some)
+            }
+            Op::DisableTaskSync(project) => self.disable_task_sync(&project).map(Some),
+            Op::SyncTasks(project) => self.sync_tasks(&project).await.map(Some),
+            Op::CreateIssue { id } => self.create_issue_for(&id).await.map(Some),
+            Op::UnlinkTask { id } => self.unlink_task_issue(&id).map(Some),
+            Op::StartTask {
+                id,
+                branch,
+                assignee,
+                notice,
+            } => self
+                .start_task(&id, &branch, assignee, notice.as_deref())
+                .map(Some),
             Op::RenameProject { project, name } => self.rename_project(&project, &name).map(Some),
             Op::ReorderProjects { machine, ordered } => {
                 self.reorder_projects(&machine, &ordered).map(Some)
@@ -1939,7 +2062,9 @@ impl Engine {
             }
             ConnState::Offline { .. } | ConnState::Closed => return Ok(HostSync::default()),
         }
-        let (projects, sessions, _) = client
+        let leon_link::client::Shared {
+            projects, sessions, ..
+        } = client
             .share_state()
             .await
             .map_err(|error| EngineError::Invalid(error.to_string()))?;
@@ -2991,6 +3116,103 @@ impl Engine {
         let project = self.inner.store.project(id)?;
         self.inner.store.remove_project(id)?;
         Ok(format!("Removed project {}.", project.name))
+    }
+
+    /// Creates a task on a board, or says which open task has its title.
+    fn add_task(&self, new: &leon_core::NewTask) -> Result<String, EngineError> {
+        let saved = self
+            .inner
+            .store
+            .add_task(new, crate::memory::now_millis())?;
+        Ok(match saved {
+            leon_core::SavedTask::New(task) => {
+                format!(
+                    "Added {} to {}: {}",
+                    task.short_id(),
+                    task.status.as_str(),
+                    task.title
+                )
+            }
+            leon_core::SavedTask::Known(task) => format!(
+                "Already on the board as {} ({}): {}",
+                task.short_id(),
+                task.status.as_str(),
+                task.title
+            ),
+        })
+    }
+
+    /// Moves a task to a column.
+    fn move_task(
+        &self,
+        id: &str,
+        status: leon_core::TaskStatus,
+        before: Option<&str>,
+    ) -> Result<String, EngineError> {
+        let task = self
+            .inner
+            .store
+            .move_task(id, status, before, crate::memory::now_millis())?;
+        Ok(format!(
+            "Moved {} to {}: {}",
+            task.short_id(),
+            task.status.as_str(),
+            task.title
+        ))
+    }
+
+    /// Removes a task for good.
+    fn delete_task(&self, id: &str) -> Result<String, EngineError> {
+        let task = self.inner.store.delete_task(id)?;
+        Ok(format!("Deleted {}: {}", task.short_id(), task.title))
+    }
+
+    /// Writes what starting work on a task means: its branch, `doing` and
+    /// the agent that codes it.
+    fn start_task(
+        &self,
+        id: &str,
+        branch: &str,
+        assignee: Option<String>,
+        notice: Option<&str>,
+    ) -> Result<String, EngineError> {
+        let patch = leon_core::TaskPatch {
+            status: Some(leon_core::TaskStatus::Doing),
+            branch: Some(Some(branch.to_owned())),
+            assignee: assignee.map(Some),
+            ..leon_core::TaskPatch::default()
+        };
+        let task = self
+            .inner
+            .store
+            .update_task(id, &patch, crate::memory::now_millis())?;
+        let mut line = format!(
+            "Created worktree {branch} for {}: {}",
+            task.short_id(),
+            task.title
+        );
+        if let Some(notice) = notice {
+            line.push(' ');
+            line.push_str(notice);
+        }
+        Ok(line)
+    }
+
+    /// Changes a task.
+    fn update_task(&self, id: &str, patch: &leon_core::TaskPatch) -> Result<String, EngineError> {
+        let task = self
+            .inner
+            .store
+            .update_task(id, patch, crate::memory::now_millis())?;
+        Ok(match patch.priority {
+            Some(priority) if patch.status.is_none() => format!(
+                "Priority of {} is {}: {}",
+                task.short_id(),
+                priority.as_str(),
+                task.title
+            ),
+            _ => format!("Changed {}: {}", task.short_id(), task.title),
+        })
     }
 
     /// Writes the managed block of the shared memory into a project's
@@ -5915,6 +6137,537 @@ branch refs/heads/feature/login
         assert_eq!(rig.runner.calls().len(), FOLDERS.len());
         assert!(most > 1, "they ran side by side");
         assert!(most <= DISCOVERY_PARALLELISM, "{most} at once");
+    }
+
+    #[tokio::test]
+    async fn a_task_is_added_moved_and_changed_through_the_engine() {
+        let rig = rig(ScriptedRunner::new());
+        let root = Some("/srv/api".to_owned());
+        let scope = leon_core::MemoryScope::project("/srv/api");
+        let all = |rig: &Rig| {
+            rig.store
+                .tasks(&scope, &leon_core::TaskFilter::default(), 10)
+                .unwrap()
+        };
+
+        rig.engine
+            .run(Op::AddTask {
+                root: root.clone(),
+                title: "Rotate the key".into(),
+                status: leon_core::TaskStatus::Backlog,
+                body: "Before the end of the month.".into(),
+                priority: Some(leon_core::TaskPriority::High),
+                assignee: Some("ana".into()),
+                labels: vec!["security".into()],
+            })
+            .await;
+        assert!(
+            status(&rig.engine).text.starts_with("Added "),
+            "{}",
+            status(&rig.engine).text
+        );
+        let first = all(&rig).remove(0);
+        assert_eq!(first.status, leon_core::TaskStatus::Backlog);
+        // What the creation panel gives is kept.
+        assert_eq!(first.body, "Before the end of the month.");
+        assert_eq!(first.priority, leon_core::TaskPriority::High);
+        assert_eq!(first.assignee.as_deref(), Some("ana"));
+        assert_eq!(first.labels, ["security"]);
+
+        // The same title again is not a second task, and says so.
+        rig.engine
+            .run(Op::AddTask {
+                root: root.clone(),
+                title: "rotate the KEY".into(),
+                status: leon_core::TaskStatus::Todo,
+                body: String::new(),
+                priority: None,
+                assignee: None,
+                labels: Vec::new(),
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Already on the board"));
+        assert_eq!(all(&rig).len(), 1);
+
+        rig.engine
+            .run(Op::MoveTask {
+                id: first.id.clone(),
+                status: leon_core::TaskStatus::Doing,
+                before: None,
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Moved "));
+        assert_eq!(all(&rig)[0].status, leon_core::TaskStatus::Doing);
+
+        rig.engine
+            .run(Op::UpdateTask {
+                id: first.id.clone(),
+                patch: leon_core::TaskPatch {
+                    priority: Some(leon_core::TaskPriority::Urgent),
+                    ..leon_core::TaskPatch::default()
+                },
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Priority of "));
+        assert_eq!(all(&rig)[0].priority, leon_core::TaskPriority::Urgent);
+
+        // A task that is not there is an error line, not a panic.
+        rig.engine
+            .run(Op::MoveTask {
+                id: "00000000-0000-0000-0000-000000000000".into(),
+                status: leon_core::TaskStatus::Done,
+                before: None,
+            })
+            .await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+    }
+
+    #[tokio::test]
+    async fn starting_work_on_a_task_writes_its_branch_and_moves_it_to_doing() {
+        let rig = rig(ScriptedRunner::new());
+        let scope = leon_core::MemoryScope::project("/srv/api");
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(scope, "Fix the login"), 1)
+            .unwrap()
+            .into_task();
+        rig.engine
+            .run(Op::StartTask {
+                id: task.id.clone(),
+                branch: "fix-the-login-1a2b3c4d".into(),
+                assignee: Some("claude".into()),
+                notice: Some("No setup was run.".into()),
+            })
+            .await;
+        let line = status(&rig.engine).text;
+        assert!(line.starts_with("Created worktree "), "{line}");
+        assert!(line.ends_with("No setup was run."), "{line}");
+        let task = rig.store.task(&task.id).unwrap();
+        assert_eq!(task.status, leon_core::TaskStatus::Doing);
+        assert_eq!(task.branch.as_deref(), Some("fix-the-login-1a2b3c4d"));
+        assert_eq!(task.assignee.as_deref(), Some("claude"));
+    }
+
+    #[tokio::test]
+    async fn a_task_is_deleted_through_the_engine() {
+        let rig = rig(ScriptedRunner::new());
+        let scope = leon_core::MemoryScope::project("/srv/api");
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(scope, "Temporary"), 1)
+            .unwrap()
+            .into_task();
+        rig.engine
+            .run(Op::DeleteTask {
+                id: task.id.clone(),
+            })
+            .await;
+        assert!(status(&rig.engine).text.starts_with("Deleted "));
+        assert!(rig.store.task(&task.id).is_err());
+    }
+
+    // ----- syncing tasks with GitHub issues ----------------------------------------------
+    //
+    // Only a scripted runner is behind these: no `gh` runs and nothing is
+    // written to GitHub. Every call is checked by its arguments.
+
+    const REPO: &str = "zavudev/api";
+
+    /// The arguments of the calls so far, `gh` left out.
+    fn gh_calls(rig: &Rig) -> Vec<String> {
+        rig.runner
+            .calls()
+            .iter()
+            .map(|call| {
+                assert_eq!(call.program, "gh");
+                call.args.join(" ")
+            })
+            .collect()
+    }
+
+    fn api_project(rig: &Rig) -> leon_core::Project {
+        rig.store
+            .add_project(&MachineId::local(), "api", "/srv/api")
+            .unwrap()
+    }
+
+    fn api_scope() -> leon_core::MemoryScope {
+        leon_core::MemoryScope::project("/srv/api")
+    }
+
+    fn issues_json(entries: &[&str]) -> Output {
+        Output::ok(format!("[{}]", entries.join(",")))
+    }
+
+    fn issue_json(number: i64, title: &str, labels: &[&str], state: &str) -> String {
+        let labels: Vec<String> = labels
+            .iter()
+            .map(|name| format!(r#"{{"name":"{name}"}}"#))
+            .collect();
+        format!(
+            r#"{{"number":{number},"url":"https://github.com/{REPO}/issues/{number}","title":"{title}","body":"","state":"{state}","stateReason":"","labels":[{}],"assignees":[],"updatedAt":"2026-10-10T10:00:00Z"}}"#,
+            labels.join(",")
+        )
+    }
+
+    #[tokio::test]
+    async fn turning_sync_on_makes_the_marker_labels_of_the_confirmed_repository_and_syncs() {
+        let mut runner = ScriptedRunner::new();
+        for _ in 0..8 {
+            runner = runner.reply(Output::ok(String::new()));
+        }
+        let rig = rig(runner.reply(issues_json(&[])));
+        let project = api_project(&rig);
+        rig.engine
+            .run(Op::EnableTaskSync {
+                project: project.id.clone(),
+                repo: REPO.into(),
+            })
+            .await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: everything is in sync."
+        );
+        let calls = gh_calls(&rig);
+        assert_eq!(calls.len(), 9, "{calls:?}");
+        for (call, label) in calls.iter().zip([
+            "status:backlog",
+            "status:todo",
+            "status:doing",
+            "status:review",
+            "priority:low",
+            "priority:medium",
+            "priority:high",
+            "priority:urgent",
+        ]) {
+            assert!(
+                call.starts_with(&format!("label create {label} -R {REPO} --force")),
+                "{call}"
+            );
+        }
+        assert!(calls[8].starts_with(&format!("issue list -R {REPO} --state all")));
+        let config = rig.store.sync_config(&api_scope()).unwrap().unwrap();
+        assert_eq!(config.repo, REPO);
+        assert!(config.last_ok_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_repository_that_is_not_owner_slash_name_turns_nothing_on() {
+        let rig = rig(ScriptedRunner::new());
+        let project = api_project(&rig);
+        rig.engine
+            .run(Op::EnableTaskSync {
+                project: project.id,
+                repo: "a/b; rm -rf /".into(),
+            })
+            .await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+        assert!(gh_calls(&rig).is_empty(), "nothing was asked of gh");
+        assert!(rig.store.sync_config(&api_scope()).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_sync_imports_open_issues_pushes_a_local_move_and_then_rests() {
+        let rig = rig(ScriptedRunner::new()
+            // The first run: issue 1 is the task's, 5 is new, 6 is closed.
+            .reply(issues_json(&[
+                &issue_json(1, "Fix the login", &["status:todo"], "OPEN"),
+                &issue_json(5, "Cache the sessions", &["bug", "status:review"], "OPEN"),
+                &issue_json(6, "Old", &[], "CLOSED"),
+            ]))
+            .reply(Output::ok(String::new())) // the marker label, made again
+            .reply(Output::ok(String::new())) // the edit
+            // The second run: what GitHub says now.
+            .reply(issues_json(&[
+                &issue_json(1, "Fix the login", &["status:doing"], "OPEN"),
+                &issue_json(5, "Cache the sessions", &["bug", "status:review"], "OPEN"),
+                &issue_json(6, "Old", &[], "CLOSED"),
+            ])));
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        // The task was linked when it was at todo, and moved to doing here.
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(api_scope(), "Fix the login"), 1)
+            .unwrap()
+            .into_task();
+        rig.store
+            .put_task_link(&leon_core::TaskLink {
+                provider: leon_core::GITHUB.into(),
+                repo: REPO.into(),
+                number: 1,
+                url: format!("https://github.com/{REPO}/issues/1"),
+                task_id: Some(task.id.clone()),
+                base: leon_core::SyncBase {
+                    title: "Fix the login".into(),
+                    body: String::new(),
+                    status: leon_core::TaskStatus::Todo,
+                    priority: leon_core::TaskPriority::None,
+                    labels: Vec::new(),
+                },
+                remote_updated_at: "2026-10-10T09:00:00Z".into(),
+                body_cut: false,
+                synced_at: 1,
+            })
+            .unwrap();
+        rig.store
+            .move_task(&task.id, leon_core::TaskStatus::Doing, None, 2)
+            .unwrap();
+
+        rig.engine.run(Op::SyncTasks(project.id.clone())).await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: 1 imported, 1 pushed."
+        );
+        let calls = gh_calls(&rig);
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(calls[1].starts_with(&format!("label create status:doing -R {REPO}")));
+        assert_eq!(
+            calls[2],
+            format!("issue edit 1 -R {REPO} --add-label=status:doing --remove-label=status:todo")
+        );
+        // Issue 5 is a task now, in review with its label; the closed issue
+        // and nothing else was left out.
+        let tasks = rig
+            .store
+            .tasks(&api_scope(), &leon_core::TaskFilter::default(), 10)
+            .unwrap();
+        assert_eq!(tasks.len(), 2);
+        let imported = tasks
+            .iter()
+            .find(|t| t.title == "Cache the sessions")
+            .unwrap();
+        assert_eq!(imported.status, leon_core::TaskStatus::Review);
+        assert_eq!(imported.labels, ["bug"]);
+        assert!(rig.store.task_link(&imported.id).unwrap().is_some());
+
+        // Syncing again, with GitHub as it now is, writes nothing anywhere.
+        let updated_before = rig.store.task(&task.id).unwrap().updated_at;
+        rig.engine.run(Op::SyncTasks(project.id)).await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: everything is in sync."
+        );
+        assert_eq!(gh_calls(&rig).len(), 4, "only the listing was asked");
+        assert_eq!(rig.store.task(&task.id).unwrap().updated_at, updated_before);
+        assert_eq!(
+            rig.store
+                .tasks(&api_scope(), &leon_core::TaskFilter::default(), 10)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn an_issue_whose_task_was_deleted_is_not_imported_again() {
+        let rig = rig(ScriptedRunner::new().reply(issues_json(&[&issue_json(
+            1,
+            "Fix the login",
+            &["status:todo"],
+            "OPEN",
+        )])));
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(api_scope(), "Fix the login"), 1)
+            .unwrap()
+            .into_task();
+        rig.store
+            .put_task_link(&leon_core::TaskLink {
+                provider: leon_core::GITHUB.into(),
+                repo: REPO.into(),
+                number: 1,
+                url: String::new(),
+                task_id: Some(task.id.clone()),
+                base: leon_core::SyncBase {
+                    title: "Fix the login".into(),
+                    body: String::new(),
+                    status: leon_core::TaskStatus::Todo,
+                    priority: leon_core::TaskPriority::None,
+                    labels: Vec::new(),
+                },
+                remote_updated_at: String::new(),
+                body_cut: false,
+                synced_at: 1,
+            })
+            .unwrap();
+        rig.store.delete_task(&task.id).unwrap();
+        rig.engine.run(Op::SyncTasks(project.id)).await;
+        assert_eq!(
+            status(&rig.engine).text,
+            "GitHub zavudev/api: everything is in sync."
+        );
+        assert!(rig
+            .store
+            .tasks(&api_scope(), &leon_core::TaskFilter::default(), 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_issue_is_opened_only_for_the_card_asked_and_only_once() {
+        let rig = rig(ScriptedRunner::new().reply(Output::ok(format!(
+            "Creating issue in {REPO}\n\nhttps://github.com/{REPO}/issues/77\n"
+        ))));
+        let _project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        let mut new = leon_core::NewTask::titled(api_scope(), "Rotate the key");
+        new.body = "Before the month ends.".into();
+        new.priority = Some(leon_core::TaskPriority::High);
+        new.labels = vec!["Security".into()];
+        let task = rig.store.add_task(&new, 1).unwrap().into_task();
+        // An untouched task makes no issue by itself.
+        assert!(gh_calls(&rig).is_empty());
+
+        rig.engine
+            .run(Op::CreateIssue {
+                id: task.id.clone(),
+            })
+            .await;
+        assert!(
+            status(&rig.engine).text.starts_with("Opened issue #77"),
+            "{}",
+            status(&rig.engine).text
+        );
+        assert_eq!(
+            gh_calls(&rig),
+            [format!(
+                "issue create -R {REPO} --title=Rotate the key --body=Before the month ends. \
+                 --label=status:todo --label=priority:high --label=security"
+            )]
+        );
+        let link = rig.store.task_link(&task.id).unwrap().unwrap();
+        assert_eq!((link.repo.as_str(), link.number), (REPO, 77));
+        // A second ask is refused without asking GitHub.
+        rig.engine
+            .run(Op::CreateIssue {
+                id: task.id.clone(),
+            })
+            .await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+        assert_eq!(gh_calls(&rig).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn without_sync_turned_on_no_issue_is_opened() {
+        let rig = rig(ScriptedRunner::new());
+        let _project = api_project(&rig);
+        let task = rig
+            .store
+            .add_task(
+                &leon_core::NewTask::titled(api_scope(), "Rotate the key"),
+                1,
+            )
+            .unwrap()
+            .into_task();
+        rig.engine.run(Op::CreateIssue { id: task.id }).await;
+        assert_eq!(status(&rig.engine).kind, StatusKind::Error);
+        assert!(gh_calls(&rig).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_gh_that_is_not_signed_in_stops_the_run_with_one_sentence() {
+        let rig = rig(ScriptedRunner::new().reply(Output::failed(
+            4,
+            "To get started with GitHub CLI, please run:  gh auth login",
+        )));
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        rig.engine.run(Op::SyncTasks(project.id)).await;
+        let line = status(&rig.engine);
+        assert_eq!(line.kind, StatusKind::Error);
+        assert!(line.text.contains("gh auth login"), "{}", line.text);
+        let config = rig.store.sync_config(&api_scope()).unwrap().unwrap();
+        assert!(config.last_error.is_some());
+        assert_eq!(config.last_ok_at, None);
+    }
+
+    #[tokio::test]
+    async fn unlinking_leaves_the_issue_alone_and_turning_sync_off_keeps_the_links() {
+        let rig = rig(ScriptedRunner::new());
+        let project = api_project(&rig);
+        rig.store
+            .enable_sync(&api_scope(), leon_core::GITHUB, REPO, 1)
+            .unwrap();
+        let task = rig
+            .store
+            .add_task(&leon_core::NewTask::titled(api_scope(), "Fix"), 1)
+            .unwrap()
+            .into_task();
+        let link = leon_core::TaskLink {
+            provider: leon_core::GITHUB.into(),
+            repo: REPO.into(),
+            number: 3,
+            url: String::new(),
+            task_id: Some(task.id.clone()),
+            base: leon_core::SyncBase {
+                title: "Fix".into(),
+                body: String::new(),
+                status: leon_core::TaskStatus::Todo,
+                priority: leon_core::TaskPriority::None,
+                labels: Vec::new(),
+            },
+            remote_updated_at: String::new(),
+            body_cut: false,
+            synced_at: 1,
+        };
+        rig.store.put_task_link(&link).unwrap();
+        rig.engine
+            .run(Op::UnlinkTask {
+                id: task.id.clone(),
+            })
+            .await;
+        assert!(status(&rig.engine)
+            .text
+            .contains("The issue was not changed"));
+        assert!(rig.store.task_link(&task.id).unwrap().is_none());
+        // It stays a tombstone: the issue is remembered.
+        assert_eq!(
+            rig.store.task_links(leon_core::GITHUB, REPO).unwrap().len(),
+            1
+        );
+        rig.engine.run(Op::DisableTaskSync(project.id)).await;
+        assert!(rig.store.sync_config(&api_scope()).unwrap().is_none());
+        assert_eq!(
+            rig.store.task_links(leon_core::GITHUB, REPO).unwrap().len(),
+            1
+        );
+        assert!(gh_calls(&rig).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_task_without_a_project_goes_on_the_global_board() {
+        let rig = rig(ScriptedRunner::new());
+        rig.engine
+            .run(Op::AddTask {
+                root: None,
+                title: "Renew the domain".into(),
+                status: leon_core::TaskStatus::Todo,
+                body: String::new(),
+                priority: None,
+                assignee: None,
+                labels: Vec::new(),
+            })
+            .await;
+        let global = rig
+            .store
+            .tasks(
+                &leon_core::MemoryScope::Global,
+                &leon_core::TaskFilter::default(),
+                10,
+            )
+            .unwrap();
+        assert_eq!(global.len(), 1);
     }
 
     #[tokio::test]

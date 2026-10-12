@@ -18,6 +18,28 @@
 *.key
 *.keychain-db
 
+# Mobile (mobile/): dependencies and everything a native build produces. The
+# TypeScript and C++ that uniffi-bindgen-react-native generates are committed;
+# the Rust libraries it builds for each phone architecture are not.
+node_modules/
+*.tsbuildinfo
+.expo/
+/mobile/**/dist/
+/mobile/**/android/build/
+/mobile/**/android/.gradle/
+/mobile/**/android/.cxx/
+/mobile/**/android/local.properties
+/mobile/**/android/generated/
+/mobile/**/ios/Pods/
+/mobile/**/ios/build/
+/mobile/**/ios/generated/
+/mobile/**/ios/DerivedData/
+xcuserdata/
+*.xcuserstate
+/mobile/modules/*/android/src/main/jniLibs/
+/mobile/modules/*/*.xcframework/
+/mobile/modules/*/build/
+
 # Operating system and editors.
 .DS_Store
 Thumbs.db

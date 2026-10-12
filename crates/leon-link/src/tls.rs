@@ -11,7 +11,10 @@
 //! * [`init`] also installs the provider as the process default, once and
 //!   harmlessly when called again, for any other rustls user in the process;
 //!   the applications call it first thing in `main`;
-//! * the roots are the system's native certificates and nothing else.
+//! * the roots are the system's native certificates and nothing else. On
+//!   iOS and Android, where the system's store is only reachable through
+//!   the platform's own API, they are Mozilla's list compiled in
+//!   (`webpki-roots`) and nothing else.
 //!   Tests may add a root of their own through [`trust_for_tests`], which
 //!   exists only in test builds and with the `test-support` feature.
 
@@ -50,11 +53,29 @@ pub fn trust_for_tests(root: CertificateDer<'static>) {
     }
 }
 
-fn native_roots() -> RootCertStore {
+/// The roots of this platform: the system's store on a desktop.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn platform_roots() -> RootCertStore {
     let mut store = RootCertStore::empty();
     let loaded = rustls_native_certs::load_native_certs();
     let (added, ignored) = store.add_parsable_certificates(loaded.certs);
     tracing::debug!(added, ignored, errors = loaded.errors.len(), "native roots");
+    store
+}
+
+/// The roots of this platform: Mozilla's list on a phone, whose own store
+/// has no files to read.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn platform_roots() -> RootCertStore {
+    let mut store = RootCertStore::empty();
+    store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    tracing::debug!(added = store.len(), "bundled roots");
+    store
+}
+
+fn native_roots() -> RootCertStore {
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(unused_mut))]
+    let mut store = platform_roots();
     #[cfg(any(test, feature = "test-support"))]
     if let Ok(list) = extra_roots().lock() {
         for root in list.iter() {

@@ -120,6 +120,94 @@ impl PairingCode {
     }
 }
 
+/// The scheme and path of a pairing link.
+const LINK: &str = "leon://pair";
+
+/// What was pasted or scanned to pair: a code, and the relay it is for when
+/// it came as a link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingText {
+    /// The code.
+    pub code: PairingCode,
+    /// The relay the showing computer listens on; `None` for a bare code.
+    pub relay: Option<String>,
+}
+
+impl PairingCode {
+    /// The code as a link, for a QR and for copying:
+    /// `leon://pair?code=ABCD-EFG-HJK&relay=wss%3A%2F%2Frelay.example`.
+    ///
+    /// It carries the secret part, exactly as the code on the screen does, so
+    /// it is shown and copied only where the code is. It is a custom scheme on
+    /// purpose: opening it never reaches a web server.
+    pub fn to_link(&self, relay: &str) -> String {
+        format!("{LINK}?code={}&relay={}", self.display(), encode(relay))
+    }
+}
+
+/// Reads what a person pasted or a camera scanned: a pairing link, or a bare
+/// code with whatever spaces and case it came with.
+pub fn parse_text(input: &str) -> Option<PairingText> {
+    let text = input.trim();
+    let Some(query) = text
+        .get(..LINK.len())
+        .filter(|head| head.eq_ignore_ascii_case(LINK))
+        .map(|_| text[LINK.len()..].trim_start_matches('/'))
+    else {
+        return PairingCode::parse(text).map(|code| PairingText { code, relay: None });
+    };
+    let query = query.strip_prefix('?')?;
+    let mut code = None;
+    let mut relay = None;
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        match key {
+            "code" => code = PairingCode::parse(&decode(value)?),
+            "relay" => relay = Some(decode(value)?).filter(|url| !url.trim().is_empty()),
+            _ => {}
+        }
+    }
+    Some(PairingText { code: code?, relay })
+}
+
+/// Percent-encodes everything but the unreserved characters.
+fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Undoes [`encode`]; `None` for a broken escape or bytes that are not text.
+fn decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'%' => {
+                let hex = text.get(at + 1..at + 3)?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                at += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                at += 1;
+            }
+            byte => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 impl Drop for PairingCode {
     fn drop(&mut self) {
         self.symbols.zeroize();
@@ -186,5 +274,32 @@ mod tests {
         for _ in 0..200 {
             assert!(seen.insert(PairingCode::generate().display()));
         }
+    }
+    #[test]
+    fn a_link_carries_the_code_and_the_relay_and_reads_back() {
+        let code = PairingCode::parse("ABCD-EFG-HJK").unwrap();
+        let link = code.to_link("ws://192.168.1.20:8787/a b");
+        assert_eq!(
+            link,
+            "leon://pair?code=ABCD-EFG-HJK&relay=ws%3A%2F%2F192.168.1.20%3A8787%2Fa%20b"
+        );
+        let read = parse_text(&format!("  {link}\n")).unwrap();
+        assert_eq!(read.code, code);
+        assert_eq!(read.relay.as_deref(), Some("ws://192.168.1.20:8787/a b"));
+    }
+
+    #[test]
+    fn pasted_text_is_a_link_or_a_bare_code() {
+        let bare = parse_text(" abcd efg hjk ").unwrap();
+        assert_eq!(bare.code.display(), "ABCD-EFG-HJK");
+        assert_eq!(bare.relay, None);
+        let no_relay = parse_text("LEON://pair/?code=ABCDEFGHJK").unwrap();
+        assert_eq!(no_relay.code, bare.code);
+        assert_eq!(no_relay.relay, None);
+        assert!(parse_text("leon://pair?relay=wss%3A%2F%2Fx").is_none());
+        assert!(parse_text("leon://pair?code=ABCD").is_none());
+        assert!(parse_text("leon://pair?code=ABCD-EFG-HJK&relay=%ZZ").is_none());
+        assert!(parse_text("https://example.com/?code=ABCD-EFG-HJK").is_none());
+        assert!(parse_text("").is_none());
     }
 }

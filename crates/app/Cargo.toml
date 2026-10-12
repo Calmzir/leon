@@ -58,6 +58,8 @@ gpui-kit.workspace = true
 # the viewer shows: the `image` GPUI already uses, with the formats it decodes.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
 regex = "1"
+# The pairing link of "Share this machine" as a QR code: the modules only, drawn by the interface.
+qrcode = { version = "0.14", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
