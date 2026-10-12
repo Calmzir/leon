@@ -4,6 +4,10 @@
 
 ### Added
 
+* A terminal needs no project or worktree. `New shell` (`Ctrl+T`) with the
+  keyboard on a machine, or with nothing selected, opens a shell in that
+  machine's home folder instead of asking you to select a project first. It
+  lives in a folder of its own in the tree, like any shell outside a project.
 * A viewer for pictures. A PNG, JPEG, GIF, WebP, BMP, ICO or TIFF file on this
   computer opens in a tab like a text file does, from the file tree, the quick
   open, a typed path or a link in the terminal, drawn to fit the pane (never

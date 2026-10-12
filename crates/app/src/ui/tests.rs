@@ -136,6 +136,7 @@ impl FakeSystem {
     fn new() -> Rc<Self> {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rc"), FAKE_SHELL_RC).unwrap();
+        std::fs::create_dir(dir.path().join("home")).unwrap();
         Rc::new(Self {
             dir,
             missing: Vec::new(),
@@ -180,6 +181,9 @@ impl System for FakeSystem {
     }
     fn dir_exists(&self, path: &str) -> bool {
         std::path::Path::new(path).is_dir()
+    }
+    fn home_dir(&self) -> Option<String> {
+        Some(self.dir.path().join("home").to_string_lossy().into_owned())
     }
 }
 
@@ -6881,6 +6885,35 @@ mod live {
         });
         assert_eq!(h.main_kind(cx), "live:1");
         assert_eq!(script_of(&h, 1).spec().cwd.as_deref(), Some(path.as_str()));
+    }
+
+    #[gpui_kit::test]
+    fn a_shell_needs_no_project_or_worktree_and_opens_in_the_home_folder(cx: &mut TestAppContext) {
+        let h = open_live(cx);
+        // The keyboard is on the machine: no folder, no project, no worktree.
+        cx.update(|cx| {
+            h.shell.update(cx, |shell, _| {
+                shell.show(&NodeId::Machine(MachineId::local()));
+                shell.pane = Pane::Sidebar;
+            })
+        });
+        h.press("ctrl-t", cx);
+        wait_until(&h, cx, "the shell", |h, cx| live_count(h, cx) == 1);
+        assert_eq!(h.main_kind(cx), "live:1");
+        let cwd = script_of(&h, 1).spec().cwd.clone().unwrap();
+        assert!(
+            cwd.ends_with("home"),
+            "the home folder of the computer: {cwd}"
+        );
+        let in_a_project = cx.update(|cx| {
+            let shell = h.shell.read(cx);
+            shell
+                .snapshot
+                .projects
+                .iter()
+                .any(|entry| entry.project.root == cwd)
+        });
+        assert!(!in_a_project, "it belongs to no project");
     }
 
     #[gpui_kit::test]

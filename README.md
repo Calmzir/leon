@@ -236,7 +236,10 @@ The icon is the glare mark on its ink tile, generated from
    everything else; an existing folder is only used when it is empty.
 2. Select a worktree and start a session: `New agent session`, choose the
    agent. Without a selected worktree it asks for one first.
-3. `Open a shell here` opens a terminal in the selected worktree.
+3. `Open a shell here` opens a terminal in the selected worktree, project or
+   folder. With nothing of the kind selected (on a machine, or with nothing
+   open) it opens one in that machine's home folder: a terminal needs no
+   project and no worktree.
 
 Every terminal is your machine's interactive login shell (`$SHELL -l -i`,
 PowerShell on Windows, `ssh -t` into the remote login shell) in the folder; an
