@@ -35,7 +35,7 @@ pub mod theme;
 #[cfg(feature = "den3d")]
 pub mod gpu;
 
-pub use camera::Camera;
+pub use camera::{Camera, Zoom};
 pub use mesh::Mesh;
 pub use theme::Theme;
 
