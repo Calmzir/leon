@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-13
+
 ### Added
 
 * One interface for every agent, experimental and off until you turn it on in
