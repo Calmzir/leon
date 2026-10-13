@@ -165,6 +165,49 @@ fn a_pixel_goes_back_to_the_point_of_the_floor_it_shows() {
 }
 
 #[test]
+fn a_zoom_keeps_the_point_under_the_pointer_and_never_leaves_the_room() {
+    use crate::iso::camera::{Zoom, MAX_ZOOM};
+    let fitted = Camera::fit(14, 11, 1280., 800., 24.);
+    // Fitted is the camera as it was.
+    assert_eq!(fitted.zoomed(Zoom::FIT), fitted);
+    assert!(!Zoom::FIT.is_near());
+
+    // The point of the floor under the pointer stays under it.
+    let at = (0.7, 0.4);
+    let pointer = (at.0 * 1280., at.1 * 800.);
+    let before = fitted.floor(pointer.0, pointer.1, 0.);
+    let zoom = Zoom::FIT.about(1.5, at);
+    assert!(zoom.is_near() && close(zoom.by, 1.5));
+    let near = fitted.zoomed(zoom);
+    let after = near.floor(pointer.0, pointer.1, 0.);
+    assert!(close(before.0, after.0) && close(before.1, after.1));
+    assert!(close(near.scale, fitted.scale * 1.5));
+    // And a pixel still goes back to the point it shows.
+    let (px, py) = near.project([5., 0.7, 6.]);
+    let (x, z) = near.floor(px, py, 0.7);
+    assert!(close(x, 5.) && close(z, 6.));
+
+    // No nearer than the most, no farther than fitted, and back at fitted
+    // nothing is left of where the room was moved to.
+    assert!(close(zoom.about(100., at).by, MAX_ZOOM));
+    assert_eq!(zoom.about(0.001, at), Zoom::FIT);
+    assert_eq!(Zoom::FIT.moved((0.3, -0.2)), Zoom::FIT);
+
+    // Moved as far as it goes, the enlarged picture still covers the view.
+    for by in [(9., 9.), (-9., -9.), (9., -9.)] {
+        let moved = zoom.moved(by);
+        for shift in [moved.shift.0, moved.shift.1] {
+            assert!((1. - moved.by..=0.).contains(&shift), "{moved:?}");
+        }
+    }
+    let wild = Zoom {
+        by: f32::NAN,
+        shift: (f32::INFINITY, 2.),
+    };
+    assert_eq!(wild.held(), Zoom::FIT);
+}
+
+#[test]
 fn what_is_farther_into_the_room_is_higher_in_the_picture_and_less_near() {
     let camera = Camera::fit(14, 11, 1280., 800., 24.);
     let (_, far) = camera.project([3., 0., 3.]);

@@ -47,6 +47,10 @@
 //!   Den, where it joins as an egg. The sessions that were sent home are
 //!   listed under the roster; a click, or `W`, wakes one.
 //! * **Go to a lion** (`/`) asks which, by name, state or folder.
+//! * **Zoom.** In 2.5D the wheel over the room zooms about the pointer, a
+//!   drag of the floor (or of anything, with the middle button) moves the
+//!   room, and a double click on the floor shows all of it again; `+`, `-`
+//!   and `0` do the same from the keyboard.
 //! * `?` shows every key of the Den ([`DEN_KEYS`], the table the keys are
 //!   read from).
 //!
@@ -219,6 +223,10 @@ pub(super) enum DenKey {
     FeedEnd(bool),
     /// The feed's entries, one back or on.
     FeedStep(bool),
+    /// The room in 2.5D, nearer or farther.
+    Zoom(bool),
+    /// The whole room again.
+    ZoomFit,
     /// The editor of the room.
     Edit,
     /// Every key, over the room.
@@ -373,6 +381,24 @@ pub(super) const DEN_KEYS: &[DenKeyRow] = &[
         label: "Shift+Down",
         what: "the feed's entry after",
         key: DenKey::FeedStep(false),
+    },
+    DenKeyRow {
+        strokes: &[("+", false), ("+", true), ("=", false), ("=", true)],
+        label: "+",
+        what: "the room, nearer",
+        key: DenKey::Zoom(true),
+    },
+    DenKeyRow {
+        strokes: &[("-", false)],
+        label: "-",
+        what: "the room, farther",
+        key: DenKey::Zoom(false),
+    },
+    DenKeyRow {
+        strokes: &[("0", false)],
+        label: "0",
+        what: "the whole room",
+        key: DenKey::ZoomFit,
     },
     DenKeyRow {
         strokes: &[("e", false)],
@@ -1848,6 +1874,20 @@ impl Shell {
                 self.run_command(Command::GoToLion, window, cx);
             }
             DenKey::Menu => self.den_menu_here(cx),
+            DenKey::Zoom(nearer) => {
+                let steps = if nearer { 2 } else { -2 };
+                let (moved, three_d) =
+                    view.update(cx, |den, cx| (den.zoom_by(steps, cx), den.is_three_d()));
+                if !moved && !three_d {
+                    self.engine.report(
+                        crate::engine::StatusKind::Info,
+                        "The Den zooms in 2.5D only.",
+                    );
+                }
+            }
+            DenKey::ZoomFit => {
+                view.update(cx, |den, cx| den.zoom_fit(cx));
+            }
             DenKey::Edit => self.den_tool(super::den_edit::Tool::Edit, cx),
             DenKey::Keys => self.den_toggle_keys(window, cx),
         }
@@ -2515,6 +2555,10 @@ mod tests {
             ("m", false, DenKey::Menu),
             ("tab", true, DenKey::Previous),
             ("pageup", false, DenKey::FeedPage(true)),
+            ("=", false, DenKey::Zoom(true)),
+            ("+", true, DenKey::Zoom(true)),
+            ("-", false, DenKey::Zoom(false)),
+            ("0", false, DenKey::ZoomFit),
         ] {
             assert_eq!(den_key_of(key, shift), Some(action), "{key}");
         }

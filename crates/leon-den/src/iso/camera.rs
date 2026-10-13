@@ -24,6 +24,79 @@ pub const SUN: [f32; 3] = [0.28, 0.82, 0.5];
 /// How far apart the nearest and the farthest thing may be.
 const DEPTH: f32 = 120.;
 
+/// The nearest the room is looked at: so many times what fits.
+pub const MAX_ZOOM: f32 = 4.;
+
+/// How much nearer than fitted the room is looked at, and which part of it
+/// shows. The picture of the fitted room is made `by` times larger and then
+/// moved by `shift`, which is in widths and heights of the picture, so that
+/// it holds when the picture changes its size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Zoom {
+    /// How many times larger than fitted: 1 to [`MAX_ZOOM`].
+    pub by: f32,
+    /// Where the top left of the enlarged picture went.
+    pub shift: (f32, f32),
+}
+
+impl Zoom {
+    /// The whole room, as [`Camera::fit`] shows it.
+    pub const FIT: Zoom = Zoom {
+        by: 1.,
+        shift: (0., 0.),
+    };
+
+    /// Whether the room is looked at nearer than fitted.
+    pub fn is_near(self) -> bool {
+        self.by > 1.
+    }
+
+    /// The zoom kept in its bounds: no farther than fitted, and no part of
+    /// the picture left empty by going off the fitted room.
+    pub fn held(self) -> Zoom {
+        let by = if self.by.is_finite() {
+            self.by.clamp(1., MAX_ZOOM)
+        } else {
+            1.
+        };
+        let within = |shift: f32| {
+            if shift.is_finite() {
+                shift.clamp(1. - by, 0.)
+            } else {
+                0.
+            }
+        };
+        Zoom {
+            by,
+            shift: (within(self.shift.0), within(self.shift.1)),
+        }
+    }
+
+    /// `factor` times nearer, with the point `at` of the picture staying
+    /// where it is: `at` is in widths and heights, `(0.5, 0.5)` the middle.
+    pub fn about(self, factor: f32, at: (f32, f32)) -> Zoom {
+        let by = (self.by * factor).clamp(1., MAX_ZOOM);
+        let ratio = by / self.by;
+        Zoom {
+            by,
+            shift: (
+                at.0 - ratio * (at.0 - self.shift.0),
+                at.1 - ratio * (at.1 - self.shift.1),
+            ),
+        }
+        .held()
+    }
+
+    /// The picture moved by so many widths and heights.
+    pub fn moved(self, by: (f32, f32)) -> Zoom {
+        Zoom {
+            by: self.by,
+            shift: (self.shift.0 + by.0, self.shift.1 + by.1),
+        }
+        .held()
+    }
+}
+
 /// The eye, fitted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
@@ -109,6 +182,17 @@ impl Camera {
             reach: dot(span, span).sqrt() / 2. + 3.,
             tilt: (sin, cos),
         }
+    }
+
+    /// The same eye, nearer: what it showed is enlarged and moved as `zoom`
+    /// says, in a picture of the same size.
+    pub fn zoomed(mut self, zoom: Zoom) -> Camera {
+        self.scale *= zoom.by;
+        self.offset = (
+            self.offset.0 * zoom.by + zoom.shift.0 * self.size.0,
+            self.offset.1 * zoom.by + zoom.shift.1 * self.size.1,
+        );
+        self
     }
 
     /// Where a point of the room is in the picture, in its pixels.

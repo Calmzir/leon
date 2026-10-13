@@ -55,6 +55,13 @@
 //! piece that shows under it, which then follows at the height it was taken
 //! by. The editor is the same, and its marks are drawn in the room
 //! ([`crate::iso::room::marks`]).
+//!
+//! The room in 2.5D can be looked at nearer ([`iso::Zoom`]): the wheel over
+//! it zooms about the pointer, a drag of the floor moves it, as a drag with
+//! the middle button does anywhere, and a double click on the floor shows
+//! the whole room again. A host has the same for its keys
+//! ([`DenView::zoom_by`], [`DenView::zoom_fit`]). The pixel art always shows
+//! the whole room.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -65,7 +72,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::{
     canvas, div, fill, point, prelude::*, px, size, App, Bounds, ContentMask, Context, Corners,
     EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, RenderImage,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, RenderImage, ScrollDelta,
     ScrollWheelEvent, SharedString, Task, TextAlign, TextRun, Window,
 };
 
@@ -135,6 +142,25 @@ pub const GLIDE_PACE: Duration = Duration::from_millis(33);
 /// plate are.
 const PLATE_TEXT: f32 = 0.84;
 
+/// How much nearer a line of the wheel, or a step of the host's keys, brings
+/// the room.
+const ZOOM_STEP: f32 = 1.15;
+/// How many pixels of a touchpad are a line of the wheel.
+const WHEEL_LINE: f32 = 40.;
+/// How many device pixels the pointer goes before a press is a drag.
+const DRAG_SLACK: i32 = 3;
+
+/// The room being moved by the pointer.
+struct Drag {
+    button: MouseButton,
+    /// Where the pointer went down, in the view's device pixels.
+    from: (i32, i32),
+    /// The zoom it started from.
+    zoom: iso::Zoom,
+    /// Whether the pointer has gone far enough to move the room.
+    moved: bool,
+}
+
 /// Which picture of the room the view shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Drawn {
@@ -193,6 +219,10 @@ struct State {
     /// How high the pointer took the piece it drags in 2.5D: it follows
     /// the pointer at that height.
     grab: f32,
+    /// How near the room in 2.5D is looked at.
+    zoom: iso::Zoom,
+    /// The room being moved by the pointer, while it is.
+    drag: Option<Drag>,
     /// How many times the view has painted, how many pictures it has
     /// composited, and how many timers it has set.
     paints: usize,
@@ -223,6 +253,7 @@ struct IsoKey {
     /// The stride of those that walk, to a sixteenth of a turn.
     stride: i64,
     size: (u32, u32),
+    zoom: iso::Zoom,
     theme: iso::Theme,
 }
 
@@ -268,6 +299,8 @@ impl DenView {
                 three_d: ThreeD::Off,
                 shown: None,
                 grab: 0.,
+                zoom: iso::Zoom::FIT,
+                drag: None,
                 paints: 0,
                 pictures: 0,
                 timers: 0,
@@ -688,6 +721,8 @@ impl DenView {
         let (x, y) = self.view_point(event.position);
         let mut state = self.state.borrow_mut();
         if !state.scene.feed.is_some_and(|feed| feed.contains(x, y)) {
+            drop(state);
+            self.scroll_room(event, (x, y), cx);
             return;
         }
         let line = state
@@ -707,6 +742,145 @@ impl DenView {
         state.den.feed_mut().scroll(rows, total, height);
         drop(state);
         cx.notify();
+    }
+
+    /// The wheel over the room in 2.5D: a wheel zooms about the pointer, and
+    /// so does a touchpad with Control or the platform's key held; a
+    /// touchpad alone moves the room.
+    fn scroll_room(&mut self, event: &ScrollWheelEvent, at: (i32, i32), cx: &mut Context<Self>) {
+        let Some((origin, size)) = self.room_at(at) else {
+            return;
+        };
+        let mut state = self.state.borrow_mut();
+        let before = state.zoom;
+        let zooms = event.modifiers.control || event.modifiers.platform;
+        state.zoom = match event.delta {
+            ScrollDelta::Pixels(delta) if !zooms => {
+                before.moved((delta.x.as_f32() / size.0, delta.y.as_f32() / size.1))
+            }
+            delta => {
+                let lines = match delta {
+                    ScrollDelta::Pixels(delta) => delta.y.as_f32() / WHEEL_LINE,
+                    ScrollDelta::Lines(delta) => delta.y,
+                };
+                // A wheel up zooms in.
+                before.about(
+                    ZOOM_STEP.powf(lines),
+                    (
+                        (at.0 - origin.0) as f32 / size.0,
+                        (at.1 - origin.1) as f32 / size.1,
+                    ),
+                )
+            }
+        };
+        let changed = state.zoom != before;
+        drop(state);
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// The picture of the room in 2.5D, if this point of the view is on it:
+    /// its top left in the view and its size, in device pixels.
+    fn room_at(&self, (x, y): (i32, i32)) -> Option<((i32, i32), (f32, f32))> {
+        let state = self.state.borrow();
+        let shown = state.shown.as_ref()?;
+        let (w, h) = shown.camera.size;
+        let inside = x >= shown.origin.0
+            && y >= shown.origin.1
+            && ((x - shown.origin.0) as f32) < w
+            && ((y - shown.origin.1) as f32) < h;
+        inside.then_some((shown.origin, (w, h)))
+    }
+
+    /// How near the room is looked at: 1 when the whole of it shows. It is
+    /// always 1 in the pixel art.
+    pub fn zoom(&self) -> f32 {
+        self.state.borrow().zoom.by
+    }
+
+    /// Brings the room so many steps nearer, about its middle, or takes it
+    /// back with a negative number: a step is a line of the wheel. `false`
+    /// when nothing changed: the room is as near or as far as it goes, or
+    /// it is not drawn in 2.5D.
+    pub fn zoom_by(&mut self, steps: i32, cx: &mut Context<Self>) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.shown.is_none() {
+            return false;
+        }
+        let before = state.zoom;
+        state.zoom = before.about(ZOOM_STEP.powi(steps), (0.5, 0.5));
+        let changed = state.zoom != before;
+        drop(state);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Shows the whole room again. `false` when it showed already.
+    pub fn zoom_fit(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut state = self.state.borrow_mut();
+        let changed = state.zoom != iso::Zoom::FIT;
+        state.zoom = iso::Zoom::FIT;
+        drop(state);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Takes the room by the pointer, to move it.
+    fn start_drag(&mut self, button: MouseButton, from: (i32, i32)) {
+        let mut state = self.state.borrow_mut();
+        let zoom = state.zoom;
+        state.drag = Some(Drag {
+            button,
+            from,
+            zoom,
+            moved: false,
+        });
+    }
+
+    /// Moves the room with the pointer that holds it. `true` while the
+    /// pointer holds the room: the move is then nothing else.
+    fn drag_to(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) -> bool {
+        let (x, y) = self.view_point(event.position);
+        let mut state = self.state.borrow_mut();
+        let state = &mut *state;
+        let Some(drag) = state.drag.as_mut() else {
+            return false;
+        };
+        // The button went up where the view did not see it.
+        if event.pressed_button != Some(drag.button) {
+            state.drag = None;
+            return false;
+        }
+        let Some(shown) = state.shown.as_ref() else {
+            state.drag = None;
+            return false;
+        };
+        let (dx, dy) = (x - drag.from.0, y - drag.from.1);
+        drag.moved |= dx.abs() > DRAG_SLACK || dy.abs() > DRAG_SLACK;
+        if drag.moved {
+            let (w, h) = shown.camera.size;
+            let zoom = drag.zoom.moved((dx as f32 / w, dy as f32 / h));
+            if zoom != state.zoom {
+                state.zoom = zoom;
+                cx.notify();
+            }
+        }
+        true
+    }
+
+    /// Lets go of the room, if this button held it: whether it did, and
+    /// whether the room was moved.
+    fn end_drag(&mut self, button: MouseButton) -> Option<bool> {
+        let mut state = self.state.borrow_mut();
+        if state.drag.as_ref()?.button != button {
+            return None;
+        }
+        state.drag.take().map(|drag| drag.moved)
     }
 
     /// Reads the scene last painted: where its parts are.
@@ -731,7 +905,12 @@ impl DenView {
         let y = (position.y.as_f32() * state.scale).floor() as i32 - state.origin.1;
         state.scene.row_at(x, y).or_else(|| {
             if let Some(shown) = &state.shown {
-                return iso::overlay::pick(&shown.overlay, x, y);
+                // A lion that a zoom put out of the picture is under nothing.
+                return layout
+                    .field
+                    .contains(x, y)
+                    .then(|| iso::overlay::pick(&shown.overlay, x, y))
+                    .flatten();
             }
             let (ax, ay) = layout.art_point(x, y)?;
             state.den.cub_at(ax, ay, self.now())
@@ -895,6 +1074,9 @@ impl DenView {
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.drag_to(event, cx) {
+            return;
+        }
         if self.is_editing() {
             let tile = self.tile_at(event.position);
             // Moving the pointer refuses nothing: what was said stays.
@@ -988,6 +1170,17 @@ impl DenView {
             None => {}
         }
         let over = self.lion_at(event.position);
+        // The floor of a room looked at near: a drag moves it, a double
+        // click shows the whole room again, and a click selects nobody, once
+        // the button is up and the room was not moved.
+        if over.is_none() && self.zoom() > 1. && self.room_at((x, y)).is_some() {
+            if event.click_count >= 2 {
+                self.zoom_fit(cx);
+            } else {
+                self.start_drag(MouseButton::Left, (x, y));
+            }
+            return;
+        }
         let before = self.selected();
         self.state.borrow_mut().den.select(over);
         self.selection_moved(before, cx);
@@ -1024,7 +1217,24 @@ impl DenView {
         cx.notify();
     }
 
+    /// The middle button takes the room in 2.5D anywhere on it, a lion or a
+    /// piece being edited included.
+    fn on_middle_down(&mut self, event: &MouseDownEvent, _: &mut Window, _: &mut Context<Self>) {
+        let at = self.view_point(event.position);
+        if self.room_at(at).is_some() {
+            self.start_drag(MouseButton::Middle, at);
+        }
+    }
+
+    fn on_middle_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        self.end_drag(MouseButton::Middle);
+    }
+
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // A click on the floor that moved nothing selects nobody.
+        if self.end_drag(MouseButton::Left) == Some(false) {
+            self.select(None, cx);
+        }
         if self.is_editing() {
             let said = self.state.borrow().refused;
             self.edit(
@@ -1056,6 +1266,9 @@ impl Render for DenView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_middle_up))
+            .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::on_middle_up))
             .child(
                 canvas(
                     |bounds, _, _| bounds,
@@ -1168,13 +1381,15 @@ fn paint(
         if let ThreeD::On(renderer) = &mut state.three_d {
             let field = layout.field;
             let size = (field.w.max(16) as u32, field.h.max(16) as u32);
+            state.zoom = state.zoom.held();
             let camera = iso::Camera::fit(
                 cols,
                 rows,
                 size.0 as f32,
                 size.1 as f32,
                 layout.px(26.) as f32,
-            );
+            )
+            .zoomed(state.zoom);
             let glide = state.den.glide(now);
             let walking = state.den.walking(now);
             let seconds = now.as_secs_f32();
@@ -1209,6 +1424,7 @@ fn paint(
                         0
                     },
                     size,
+                    zoom: state.zoom,
                     theme: style.room,
                 }),
             };
@@ -1279,6 +1495,9 @@ fn paint(
             Some(picture) => picture,
             None => {
                 state.shown = None;
+                // The pixel art is the whole room, always.
+                state.zoom = iso::Zoom::FIT;
+                state.drag = None;
                 let scene = build(&state.den, &frame, &layout, &style.palette, note.as_deref());
                 let wanted = Picture {
                     frame: still,
@@ -1344,48 +1563,52 @@ fn paint(
         // What is written over the room in 2.5D: the plates and the bubbles.
         let plate_size = style.font_size * PLATE_TEXT;
         let plate_line = (line_height * PLATE_TEXT).round();
-        for label in &labels {
-            if let Some(leader) = label.leader {
-                window.paint_quad(fill(area(leader), label.line));
+        // A plate of a lion that a zoom put out of the picture stays out of
+        // the roster and the feed.
+        window.with_content_mask(Some(ContentMask { bounds: room }), |window| {
+            for label in &labels {
+                if let Some(leader) = label.leader {
+                    window.paint_quad(fill(area(leader), label.line));
+                }
+                window.paint_quad(fill(area(label.rect), label.line));
+                let inner = Rect {
+                    x: label.rect.x + 1,
+                    y: label.rect.y + 1,
+                    w: label.rect.w - 2,
+                    h: label.rect.h - 2,
+                };
+                window.paint_quad(fill(area(inner), label.ground));
+                let shaped = window.text_system().shape_line(
+                    SharedString::from(label.text.clone()),
+                    plate_size,
+                    &[TextRun {
+                        len: label.text.len(),
+                        font: font(style, true),
+                        color: label.ink,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                // The word in the middle of its box, whatever the font measures.
+                let left = label.rect.x as f32
+                    + (label.rect.w as f32 - shaped.width.as_f32() * scale).max(0.) / 2.;
+                let top = label.rect.y as f32
+                    + (label.rect.h as f32 - plate_line.as_f32() * scale).max(0.) / 2.;
+                let _ = shaped.paint(
+                    point(
+                        px((origin.0 as f32 + left) / scale),
+                        px((origin.1 as f32 + top) / scale),
+                    ),
+                    plate_line,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
             }
-            window.paint_quad(fill(area(label.rect), label.line));
-            let inner = Rect {
-                x: label.rect.x + 1,
-                y: label.rect.y + 1,
-                w: label.rect.w - 2,
-                h: label.rect.h - 2,
-            };
-            window.paint_quad(fill(area(inner), label.ground));
-            let shaped = window.text_system().shape_line(
-                SharedString::from(label.text.clone()),
-                plate_size,
-                &[TextRun {
-                    len: label.text.len(),
-                    font: font(style, true),
-                    color: label.ink,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }],
-                None,
-            );
-            // The word in the middle of its box, whatever the font measures.
-            let left = label.rect.x as f32
-                + (label.rect.w as f32 - shaped.width.as_f32() * scale).max(0.) / 2.;
-            let top = label.rect.y as f32
-                + (label.rect.h as f32 - plate_line.as_f32() * scale).max(0.) / 2.;
-            let _ = shaped.paint(
-                point(
-                    px((origin.0 as f32 + left) / scale),
-                    px((origin.1 as f32 + top) / scale),
-                ),
-                plate_line,
-                TextAlign::Left,
-                None,
-                window,
-                cx,
-            );
-        }
+        });
         for quad in &scene.quads {
             window.paint_quad(fill(area(quad.rect), quad.color));
         }

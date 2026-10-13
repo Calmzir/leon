@@ -1862,7 +1862,9 @@ Den** show the live sessions as lions at work in an office, in the place of
 the main pane; the sidebar stays. The same chord or `Esc` puts back what was
 there. The office is drawn in 2.5D in the colours of your theme; with the
 setting `den_3d` off, or on a computer whose graphics card cannot draw it,
-it is the pixel art (`docs/DEN.md`).
+it is the pixel art (`docs/DEN.md`). In 2.5D the wheel over the room zooms
+about the pointer, a drag of the floor moves the room and a double click on
+the floor shows all of it again; `+`, `-` and `0` do the same.
 
 | The agent | The lion |
 | --- | --- |

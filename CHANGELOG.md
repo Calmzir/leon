@@ -4,6 +4,12 @@
 
 ### Added
 
+* The room of the Den in 2.5D can be looked at nearer: the wheel over it
+  zooms about the pointer (a touchpad moves the room, and zooms with `Ctrl`
+  held), a drag of the floor, or of anything with the middle button, moves
+  it, and a double click on the floor shows the whole room again. `+`, `-`
+  and `0` do the same from the keyboard. The pixel art always shows the
+  whole room.
 * A terminal needs no project or worktree. `New shell` (`Ctrl+T`) with the
   keyboard on a machine, or with nothing selected, opens a shell in that
   machine's home folder instead of asking you to select a project first. It
