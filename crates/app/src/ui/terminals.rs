@@ -2193,30 +2193,64 @@ impl Shell {
         );
     }
 
+    /// The home folder of `machine`: this computer's own, or the one its
+    /// probe reported. `None` while a machine has not said.
+    fn home_of(&self, machine: &MachineId) -> Option<String> {
+        let found = self.snapshot.machine(machine)?;
+        if found.kind == MachineKind::Local {
+            return self.options.system.home_dir();
+        }
+        match self.engine.machine_state(machine) {
+            MachineState::Online(Some(report)) => report.home,
+            _ => None,
+        }
+    }
+
     /// Opens a base terminal: a new tab in the session the keyboard is in
     /// (which gets no row of its own), else a new shell session in the folder
-    /// the keyboard is on.
+    /// the keyboard is on. Where the keyboard is on no folder (a machine, or
+    /// nothing at all) the shell starts in the home folder of the machine, as
+    /// a terminal that belongs to no project and needs no worktree.
     pub(super) fn open_shell_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(of) = self.session_here() {
             self.open_shell_in(of, window, cx);
             return;
         }
-        match self.here().map(|place| (place.machine, place.cwd)) {
-            Some((machine, cwd)) => {
-                self.start_live(
-                    Launch::Shell,
-                    &machine,
-                    &cwd,
-                    Place::Session,
-                    None,
-                    window,
-                    cx,
-                );
+        let (machine, cwd) = match self.here().map(|place| (place.machine, place.cwd)) {
+            Some(place) => place,
+            None => {
+                let machine = self.current_machine();
+                match self.home_of(&machine) {
+                    Some(home) => (machine, home),
+                    None => {
+                        // A machine nobody probed yet is asked now; its home
+                        // is known by the next try.
+                        if self.snapshot.machine(&machine).is_some()
+                            && !matches!(
+                                self.engine.machine_state(&machine),
+                                MachineState::Online(_) | MachineState::Probing
+                            )
+                        {
+                            self.engine.submit(Op::Probe(machine));
+                        }
+                        self.engine.report(
+                            StatusKind::Info,
+                            "Leon does not know the home folder of that machine yet. Try again in a moment.",
+                        );
+                        return;
+                    }
+                }
             }
-            None => self
-                .engine
-                .report(StatusKind::Info, "Select a project or a worktree first."),
-        }
+        };
+        self.start_live(
+            Launch::Shell,
+            &machine,
+            &cwd,
+            Place::Session,
+            None,
+            window,
+            cx,
+        );
     }
 
     // ----- panes ---------------------------------------------------------------------------

@@ -34,6 +34,11 @@
   each agent is driven, reduced to the same turn, events and questions for
   all of them. The desktop's conversations and the phone app both use it.
 
+* A terminal needs no project or worktree. `New shell` (`Ctrl+T`) with the
+  keyboard on a machine, or with nothing selected, opens a shell in that
+  machine's home folder instead of asking you to select a project first. It
+  lives in a folder of its own in the tree, like any shell outside a project.
+
 ### Fixed
 
 * A window that came up from **Restart to update** no longer passes the mark
