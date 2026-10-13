@@ -207,6 +207,32 @@ pub const ADAPTERS: &[Adapter] = &[
         },
         needs_folder: true,
     },
+    Adapter {
+        id: "grok",
+        name: "Grok",
+        program: "grok",
+        argv: crate::grok::argv,
+        session: crate::grok::session,
+        options: Probe {
+            script: crate::grok::OPTIONS_SCRIPT,
+            arguments: crate::grok::options_arguments,
+            parse: crate::grok::parse_options,
+        },
+        needs_folder: true,
+    },
+    Adapter {
+        id: "cursor",
+        name: "Cursor",
+        program: "cursor-agent",
+        argv: crate::cursor::argv,
+        session: crate::cursor::session,
+        options: Probe {
+            script: crate::cursor::OPTIONS_SCRIPT,
+            arguments: crate::cursor::options_arguments,
+            parse: crate::cursor::parse_options,
+        },
+        needs_folder: true,
+    },
 ];
 
 /// The adapter of the agent with this tag.
@@ -236,9 +262,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_catalogue_names_the_three_agents_once_each() {
+    fn the_catalogue_names_its_agents_once_each() {
         let listed: Vec<String> = agents().into_iter().map(|agent| agent.id).collect();
-        assert_eq!(listed, ["claude", "codex", "opencode"]);
+        assert_eq!(listed, ["claude", "codex", "opencode", "grok", "cursor"]);
         assert!(adapter("claude").is_some());
         assert!(adapter("vim").is_none());
         // Every one of them starts its server and is told the rest there.

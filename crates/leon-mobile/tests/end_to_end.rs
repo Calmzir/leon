@@ -739,10 +739,17 @@ async fn the_host_is_asked_what_it_has() {
         .is_empty());
 
     // The stand-ins exist; an agent whose program does not is not listed.
-    assert_eq!(
-        world.session.installed_agents().await.unwrap(),
-        ["claude", "codex", "opencode"]
-    );
+    // The agents without a stand-in are whatever this computer has, and are
+    // left out of what is compared.
+    let installed: Vec<String> = world
+        .session
+        .installed_agents()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|agent| !matches!(agent.as_str(), "grok" | "cursor"))
+        .collect();
+    assert_eq!(installed, ["claude", "codex", "opencode"]);
     world.session.set_spawn_overrides(SpawnOverrides {
         direct: true,
         programs: HashMap::from([

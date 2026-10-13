@@ -41,7 +41,7 @@ leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3
 | `leon-update` | Updates from the GitHub releases of this repository. `version` (which tags count, which is newer), `release` (the API's answer, the platform's file), `http` (an `Http` trait and the system `curl` behind it, with the host allow-list), `download` (redirects by hand, resumable, bounded), `checksums` (`SHA256SUMS`, constant-time), `package` (the program out of the dmg, tarball or zip, strictly), `trust` (the signature rules), `install` (where Leon is installed and the swap with its way back), `launch` (the hand-over, the watch, the confirmation, the rollback), `updater` (the state machine published over a watch channel) and `state` (what is kept). No UI; every system tool (`hdiutil`, `ditto`, `codesign`, PowerShell) is behind a `Tools` trait. |
 | `leon-wire` | The wire protocol: versioned length-prefixed frames, the application messages (run a command, terminals, re-attach) and the relay rendezvous messages. Pure (`postcard` over `serde`); every decoder is bounded and fuzz-style tested. |
 | `leon-link` | Everything that keeps a remote session private: identity, the short pairing code (SPAKE2 then Noise `XXpsk3`), the Noise `IK` session with fragmentation and rekeying, the device registry, the relay WebSocket adapter, the durable `Client` (reconnection, exact terminal re-attach) and, behind `test-support`, an in-process test relay. |
-| `leon-turn` | Leon's unified agent protocol: one conversation with a coding agent, the same whatever the agent is. `agents` (the catalogue: an `Adapter` per agent, and the `AgentSession` it makes, which says what to write and reads what is printed), `claude` (Claude Code's control protocol), `codex` (Codex's application server), `opencode` (opencode over the Agent Client Protocol), `events` (`TurnEvent`, the questions and their answers, and `Lines`, bytes to clean lines), `shell` (the login shell a command is started through) and `tag` (the names messages are acknowledged by). Pure: lines in, events and lines out; it starts no process and knows no transport. See "Conversations in Leon's own interface". |
+| `leon-turn` | Leon's unified agent protocol: one conversation with a coding agent, the same whatever the agent is. `agents` (the catalogue: an `Adapter` per agent, and the `AgentSession` it makes, which says what to write and reads what is printed), `claude` (Claude Code's control protocol), `codex` (Codex's application server), `acp` (the Agent Client Protocol: one session for every agent that serves it, with a `Dialect` for where they differ) and `opencode`, `grok`, `cursor` (each one's command, dialect and what it offers), `events` (`TurnEvent`, the questions and their answers, and `Lines`, bytes to clean lines), `shell` (the login shell a command is started through) and `tag` (the names messages are acknowledged by). Pure: lines in, events and lines out; it starts no process and knows no transport. See "Conversations in Leon's own interface". |
 | `leon-voice` | Dictation: `catalog` (the speech models, which serve a language, where each comes from and its checksum), `store` (the models on this computer: installed, download, remove), `audio` (channels, rate, loudness; pure), and behind the feature `engine` `capture` (the microphone, through cpal) and `engine::Whisper` (whisper.cpp). The application sees `engine::Engine` only. See "Conversations in Leon's own interface". |
 | `leon-mobile` | Leon for phones, exported with UniFFI (the React Native package in `mobile/modules/leon-link-native` is generated from it). The application itself is `mobile/` (Expo, TypeScript; see `mobile/README.md`): it reaches this crate only through `mobile/src/link`, and is outside the Cargo workspace. `mobile` (identity, pairing, connecting), `session` (shared state, transcripts, turns), `bridge` and `turn` (a host terminal as a two-way line to an agent, with acknowledgements that survive a replay), `agents` (the command of a turn in the owner's login shell) and `events` and `options` (the types of `leon-turn` as they cross to the application, declared again field for field so the exported interface does not move). The agents themselves are driven by `leon-turn`. A turn runs in a host terminal, so it streams, survives a dropped connection and can be re-attached; the host needs nothing new. |
 | `leon-pty` | The GPUI-free part of terminals: `SpawnSpec`, grid maths and `PtyProcess` (a child in a pseudo-terminal driven by channels). `leon-term` re-exports it. |
@@ -1594,6 +1594,23 @@ While a list is open, `chat_key` gives it the arrows, `Ctrl+N`/`Ctrl+P`,
 `Enter`, `Tab` and `Escape` before the field sees them, so the keyboard stays
 where the person types. `leon-mobile` gets the same adapters and drops the
 commands at its boundary, which keeps its generated bindings as they were.
+
+**Which agents.** Claude Code, Codex, and the three that serve the Agent
+Client Protocol: opencode, Grok (`grok agent stdio`) and Cursor
+(`cursor-agent acp`). The last three share `leon_turn::acp`; a `Dialect` says
+what the effort's option is called, whether modes are an option of the session
+(opencode's agents) or the agent has none to set (then the two offered are the
+library's: asking, and allowing at once whatever is asked), whether a
+conversation is continued with `session/resume` or `session/load` (whose
+printing of the conversation again is passed over), and whether the agent must
+be told `authenticate` before a session (Cursor). Grok is tested against what
+grok 1.0.52 printed in real runs. Cursor was checked only up to its opening
+answer, the computer at hand not being signed in to it: the rest is the
+protocol as specified, and it offers no model. The agents of the catalogue
+that have no way to answer a permission over a protocol (Antigravity, ZCode)
+and Kimi, which serves the protocol and was not at hand, start in a terminal.
+The history importers know none of Grok and Cursor: their conversations are
+continued while they are open and are not found again after.
 
 **Not built yet**: taking up again a turn that still runs on a paired computer
 after the application was closed (the phone does; here closing ends it), a turn

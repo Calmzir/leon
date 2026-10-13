@@ -5,6 +5,10 @@
 //! of models cut to two and the list of commands left out.
 
 use super::*;
+use crate::agents::{Action, Outgoing, Step};
+use crate::error::TurnError;
+use crate::events::*;
+use serde_json::json;
 
 const PLAIN: &str = include_str!("fixtures/plain.jsonl");
 const ALLOW: &str = include_str!("fixtures/allow.jsonl");
@@ -604,7 +608,7 @@ fn a_turn_nobody_started_says_so_and_ends() {
         step.events,
         [TurnEvent::Finished {
             ok: false,
-            error: Some(NEVER_STARTED.into()),
+            error: Some(crate::acp::never_started("opencode")),
             cost_usd: None,
             duration_ms: None,
             denied_tools: vec![],

@@ -1,12 +1,12 @@
 //! Leon's unified agent protocol: one conversation with a coding agent, the
 //! same whatever the agent is.
 //!
-//! Claude Code, Codex and opencode each have a way of being driven by a
-//! program instead of a person at a terminal: Claude Code's control protocol,
-//! Codex's application server, opencode over the Agent Client Protocol. They
-//! differ in everything (framing, handshake, how a permission is asked, what
-//! a tool's use looks like). This crate is the one place that knows them, and
-//! what comes out of it is the same for all three:
+//! Coding agents each have a way of being driven by a program instead of a
+//! person at a terminal: Claude Code's control protocol, Codex's application
+//! server, and the Agent Client Protocol, which opencode, Grok and Cursor's
+//! agent serve. They differ in everything (framing, handshake, how a
+//! permission is asked, what a tool's use looks like). This crate is the one
+//! place that knows them, and what comes out of it is the same for all:
 //!
 //! * a **turn** is one prompt sent to an agent and everything it does about
 //!   it ([`TurnSpec`]);
@@ -30,7 +30,10 @@
 //! the desktop both run it in a terminal behind the [`bridge`].
 //!
 //! * [`agents`]: the catalogue, and the [`AgentSession`] an adapter makes;
-//! * [`claude`], [`codex`], [`opencode`]: each agent's own protocol;
+//! * [`claude`], [`codex`]: each agent's own protocol;
+//! * [`acp`]: the Agent Client Protocol, one session for every agent that
+//!   serves it, and [`opencode`], [`grok`], [`cursor`]: what each of them
+//!   does its own way;
 //! * [`bridge`]: an agent behind a terminal instead of a pipe: the script
 //!   between them, the frames written to it and the marks it answers with;
 //! * [`events`]: the events, the questions and the answers, and [`Lines`],
@@ -38,12 +41,15 @@
 //! * [`shell`]: the login shell an agent's command is started through;
 //! * [`tag`]: the names messages are acknowledged by.
 
+pub mod acp;
 pub mod agents;
 pub mod bridge;
 pub mod claude;
 pub mod codex;
+pub mod cursor;
 pub mod error;
 pub mod events;
+pub mod grok;
 pub mod opencode;
 pub mod shell;
 pub mod tag;
