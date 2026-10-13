@@ -28,12 +28,12 @@
   to a checksum; `/voice` opens that list again. The settings *Dictation
   language* and *Dictation model* say which language you speak and which
   model is used. Building Leon on macOS and Linux now needs `cmake`, a C++
-  compiler and libclang, and on Linux the ALSA development files. Sessions on other machines and
-  custom agents start in a terminal as before. The setting is off by default.
+  compiler and libclang, and on Linux the ALSA development files. Agents the
+  protocol does not drive (Kimi, ZCode, Antigravity and your own custom
+  agents) start in a terminal as before. The setting is off by default.
 * `leon-turn`, Leon's unified agent protocol: the one place that knows how
   each agent is driven, reduced to the same turn, events and questions for
   all of them. The desktop's conversations and the phone app both use it.
-
 * A terminal needs no project or worktree. `New shell` (`Ctrl+T`) with the
   keyboard on a machine, or with nothing selected, opens a shell in that
   machine's home folder instead of asking you to select a project first. It
