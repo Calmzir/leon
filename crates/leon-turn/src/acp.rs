@@ -1,27 +1,20 @@
-//! opencode, spoken to both ways.
-//!
-//! opencode serves the Agent Client Protocol on its standard streams (checked
-//! against opencode 2.0.24):
-//!
-//! ```text
-//! opencode acp
-//! ```
+//! The Agent Client Protocol, spoken to both ways: one session for every
+//! agent that serves it on its standard streams.
 //!
 //! Each line either way is one JSON-RPC 2.0 value; the `jsonrpc` member is
-//! required. The phone writes:
+//! required. The client writes:
 //!
 //! * `initialize`, then `session/new` (with the folder to work in, which
-//!   must be a whole path) or `session/resume` (an id any opencode gave a
-//!   conversation; unlike `session/load` it does not print the conversation
-//!   again). The two are written at once: they are answered in order;
+//!   must be a whole path) or what continues a conversation the agent named
+//!   before: `session/resume`, which says nothing of what was said, or
+//!   `session/load`, which prints it all again (nothing of that is shown: a
+//!   client that continues a conversation has it already). An agent that
+//!   wants to be signed in to is told `authenticate` first, and the session
+//!   is asked for once that was answered;
 //! * `session/set_config_option` for the model, the effort and the mode that
 //!   were asked for, one after the other, each once the one before was
 //!   answered. Requests are served as they come, not in order, so nothing
-//!   that needs the session is written before the session's answer. The
-//!   models of every provider are only known a moment after that: the first
-//!   `config_option_update` says so, and a model or an effort waits for it
-//!   (set before, the session would be tied to a model it may not be able
-//!   to use);
+//!   that needs the session is written before the session's answer;
 //! * `session/prompt` with the prompt. Its answer is the end of the turn;
 //! * `session/cancel` to stop it;
 //! * the answer to what the agent asks.
@@ -30,14 +23,19 @@
 //! `agent_thought_chunk`, `tool_call`, `tool_call_update`, `plan`,
 //! `usage_update`, `config_option_update`…) and asks with
 //! `session/request_permission`, which lists what it may be answered with
-//! (`allow_once`, `allow_always`, `reject_once`). A refusal ends the turn:
-//! that is opencode's way. It cannot be told more while it works (a second
-//! prompt is refused), and it reads no file and runs no terminal through the
-//! phone: this client offers neither.
+//! (`allow_once`, `allow_always`, `reject_once`, `reject_always`). It cannot
+//! be told more while it works (a second prompt is the next turn), and it
+//! reads no file and runs no terminal through the client: this one offers
+//! neither. Notifications of an agent's own making (`_x.ai/…`) are passed
+//! over.
 //!
-//! opencode has no mode in which it asks nothing. [`MODE_AUTO`] is this
-//! library's: the default agent, with every permission it asks for allowed
-//! at once, as `opencode --auto` does.
+//! Where the agents differ is a [`Dialect`]: what the option of the effort
+//! is called, whether the agent has modes, how a conversation is continued.
+//! `opencode`, `grok` and `cursor` each hold theirs.
+//!
+//! No agent of the three has a mode in which it asks nothing that can be
+//! set over the protocol. [`MODE_AUTO`] is this library's: every permission
+//! the agent asks for is allowed at once.
 //!
 //! The server ends when its input does: after the prompt's answer, its input
 //! is closed.
@@ -46,18 +44,19 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use serde_json::{json, Value};
 
-use crate::agents::{strings, Action, AgentSession, Outgoing, Step, TurnSpec};
-use crate::bridge::{id_tag, tag_id};
-use crate::claude::{AgentMode, AgentModel, AgentOptions};
-use crate::error::MobileError;
+use crate::agents::{Action, AgentSession, Outgoing, Step, TurnSpec};
+use crate::claude::AgentCommand;
+use crate::error::TurnError;
 use crate::events::{
     blocks, cap_detail, clip, edit_detail, first_line, input_detail, input_summary, text_detail,
     text_of, written_detail, Answer, PermissionChoice, PermissionEffect, QuestionKind, TurnEvent,
 };
+use crate::tag::{id_tag, tag_id};
 
 /// The ids of this client's own requests. They are fixed, so that a turn
 /// read again knows which answer is which.
 const ID_HELLO: &str = "leon-init";
+const ID_LOGIN: &str = "leon-login";
 const ID_SESSION: &str = "leon-session";
 const ID_MODEL: &str = "leon-model";
 const ID_EFFORT: &str = "leon-effort";
@@ -68,13 +67,38 @@ const ID_TURN: &str = "leon-turn";
 const ID_LOST: &str = "leon-lost";
 
 const TAG_HELLO: &str = "h.init";
+const TAG_LOGIN: &str = "h.login";
 const TAG_SESSION: &str = "h.session";
 const TAG_TURN: &str = "h.turn";
 
-/// The mode of this library's making: the default agent, never asking.
-pub(crate) const MODE_AUTO: &str = "leon-auto";
-/// The agent [`MODE_AUTO`] works as.
-const AUTO_AGENT: &str = "build";
+/// The mode of this library's making: the agent as it is, never asking.
+pub const MODE_AUTO: &str = "leon-auto";
+
+/// How one agent speaks the protocol where the agents differ.
+#[derive(Debug)]
+pub struct Dialect {
+    /// The agent's name, for what is said when something fails.
+    pub name: &'static str,
+    /// The request that continues a conversation: `session/resume`, or
+    /// `session/load` where the agent has only that.
+    pub resume: &'static str,
+    /// The way of signing in the agent must be told before a session, where
+    /// it wants to be told.
+    pub login: Option<&'static str>,
+    /// The id of the session's option that is the effort.
+    pub effort: &'static str,
+    /// The mode [`MODE_AUTO`] works as, for an agent whose modes are an
+    /// option of the session. `None`: it has no modes to set, and the only
+    /// ones are this library's (asking, and never asking).
+    pub auto_agent: Option<&'static str>,
+    /// The models of every provider are only known a moment after the
+    /// session answered: the first `config_option_update` says so, and a
+    /// model or an effort waits for it (set before, the session would be
+    /// tied to a model it may not be able to use).
+    pub models_come_late: bool,
+    /// A refusal ends the turn, which the choice then says.
+    pub refusal_ends_turn: bool,
+}
 
 /// How many characters of a change are shown to whoever must approve it.
 const DETAIL_CHARS: usize = 20_000;
@@ -82,17 +106,16 @@ const DETAIL_CHARS: usize = 20_000;
 const NOISE_LINES: usize = 6;
 
 /// What is said when the turn was never started.
-const NEVER_STARTED: &str =
-    "The prompt did not reach opencode before the connection was lost. Send it again.";
-
-/// The command line of a turn. What the turn is about travels in requests.
-pub(crate) fn argv(turn: &TurnSpec<'_>) -> Vec<String> {
-    strings(&[turn.program, "acp"])
+pub(crate) fn never_started(name: &str) -> String {
+    format!("The prompt did not reach {name} before the connection was lost. Send it again.")
 }
 
-/// A session for one turn.
-pub(crate) fn session(unique: u64) -> Box<dyn AgentSession> {
-    Box::new(OpencodeSession {
+/// A session for one turn of the agent that speaks `dialect`.
+pub fn session(unique: u64, dialect: &'static Dialect) -> Box<dyn AgentSession> {
+    Box::new(AcpSession {
+        dialect,
+        held: None,
+        replaying: false,
         unique,
         prompt: None,
         resumed: false,
@@ -170,7 +193,14 @@ struct Tool {
     shown: bool,
 }
 
-struct OpencodeSession {
+struct AcpSession {
+    dialect: &'static Dialect,
+    /// The request for the session, held back until the agent was signed
+    /// in to.
+    held: Option<Outgoing>,
+    /// The agent prints a conversation it was asked to load: none of it is
+    /// news.
+    replaying: bool,
     /// Makes the ids of this process's own requests unlike any other's.
     unique: u64,
     /// What the person wrote; nothing in a process that found the turn
@@ -216,7 +246,7 @@ struct OpencodeSession {
     noise: VecDeque<String>,
 }
 
-impl OpencodeSession {
+impl AcpSession {
     fn next_id(&mut self, kind: &str) -> String {
         self.unique += 1;
         format!("leon-{kind}-{}", self.unique)
@@ -273,7 +303,7 @@ impl OpencodeSession {
 
     fn mode_is(&mut self, mode: &str, step: &mut Step) {
         // Its agent under this library's mode is still that mode.
-        let mode = if self.auto && mode == AUTO_AGENT {
+        let mode = if self.auto && Some(mode) == self.dialect.auto_agent {
             MODE_AUTO
         } else {
             mode
@@ -411,11 +441,19 @@ impl OpencodeSession {
                     self.fail(error, step);
                 }
             }
+            ID_LOGIN => {
+                if let Some(error) = failed {
+                    self.fail(error, step);
+                    return;
+                }
+                step.send.extend(self.held.take());
+            }
             ID_SESSION => {
                 if let Some(error) = failed {
                     self.fail(error, step);
                     return;
                 }
+                self.replaying = false;
                 let result = &value["result"];
                 self.model = blocks(&result["configOptions"])
                     .iter()
@@ -431,7 +469,8 @@ impl OpencodeSession {
                 match id {
                     Some(id) => self.session_is(&id, step),
                     None if self.prompt.is_some() => {
-                        self.fail("opencode did not name the conversation".to_owned(), step);
+                        let name = self.dialect.name;
+                        self.fail(format!("{name} did not name the conversation"), step);
                         return;
                     }
                     // Found running: an update will name it.
@@ -480,7 +519,9 @@ impl OpencodeSession {
                     interrupted,
                 });
             }
-            ID_LOST if !self.prompt_delivered => self.fail(NEVER_STARTED.to_owned(), step),
+            ID_LOST if !self.prompt_delivered => {
+                self.fail(never_started(self.dialect.name), step);
+            }
             _ => {}
         }
     }
@@ -543,8 +584,11 @@ impl OpencodeSession {
                 let (effect, label) = match option["kind"].as_str()? {
                     "allow_once" => (PermissionEffect::AllowOnce, name),
                     "allow_always" => (PermissionEffect::AllowAlways, name),
-                    // What opencode does with a refusal: the turn is over.
-                    "reject_once" => (PermissionEffect::Deny, format!("{name}, and stop the turn")),
+                    // Where a refusal ends the turn, the choice says so.
+                    "reject_once" if self.dialect.refusal_ends_turn => {
+                        (PermissionEffect::Deny, format!("{name}, and stop the turn"))
+                    }
+                    "reject_once" => (PermissionEffect::Deny, name),
                     "reject_always" => (PermissionEffect::Deny, name),
                     _ => return None,
                 };
@@ -577,10 +621,10 @@ impl OpencodeSession {
         });
     }
 
-    fn answer(&self, id: &str, answer: Answer) -> Result<String, MobileError> {
-        let asked = self.asked.get(id).ok_or(MobileError::UnknownQuestion)?;
+    fn answer(&self, id: &str, answer: Answer) -> Result<String, TurnError> {
+        let asked = self.asked.get(id).ok_or(TurnError::UnknownQuestion)?;
         let Answer::Permission { choice_id, .. } = answer else {
-            return Err(MobileError::BadAnswer);
+            return Err(TurnError::BadAnswer);
         };
         let known = |wanted: &str| asked.options.iter().any(|option| option.0 == wanted);
         let result = if known(&choice_id) {
@@ -596,7 +640,7 @@ impl OpencodeSession {
                 None => json!({ "outcome": "cancelled" }),
             }
         } else {
-            return Err(MobileError::BadAnswer);
+            return Err(TurnError::BadAnswer);
         };
         Ok(outcome(&asked.id, result))
     }
@@ -636,8 +680,13 @@ impl OpencodeSession {
         let done = matches!(status, "completed" | "failed");
         let changes = changes_detail(update);
         if self.announced.insert(id.clone()) {
+            // What it was given, in a line; where that is not something this
+            // library reads (nothing, or the whole input as it stands), the
+            // agent's own words for it.
             let summary = match input_summary(&update["rawInput"]) {
-                summary if summary.is_empty() && title != name => first_line(&title),
+                summary if (summary.is_empty() || summary.starts_with('{')) && title != name => {
+                    first_line(&title)
+                }
                 summary => summary,
             };
             let detail = if changes.is_empty() {
@@ -693,11 +742,27 @@ impl OpencodeSession {
             return;
         }
         let params = &value["params"];
-        if let Some(session) = params["sessionId"].as_str() {
+        // Some agents speak of the session before they answered for it: the
+        // answer names it then, with the model it runs on. Only a process
+        // that found the turn running learns its name here.
+        if let Some(session) = params["sessionId"]
+            .as_str()
+            .filter(|_| self.ready || self.prompt.is_none())
+        {
             self.session_is(session, step);
         }
         let update = &params["update"];
-        match update["sessionUpdate"].as_str().unwrap_or_default() {
+        let kind = update["sessionUpdate"].as_str().unwrap_or_default();
+        // A conversation printed again: only what it is set to is news.
+        if self.replaying
+            && !matches!(
+                kind,
+                "config_option_update" | "available_commands_update" | "current_mode_update"
+            )
+        {
+            return;
+        }
+        match kind {
             "agent_message_chunk" => {
                 let Some(text) = update["content"]["text"].as_str().filter(|t| !t.is_empty())
                 else {
@@ -752,6 +817,9 @@ impl OpencodeSession {
                     self.models_known = true;
                     self.advance(step);
                 }
+            }
+            "available_commands_update" => {
+                step.commands = Some(commands(&update["availableCommands"]));
             }
             "current_mode_update" => {
                 let mode = text_of(&update["currentModeId"]);
@@ -814,18 +882,25 @@ fn detail_of(call: &Value) -> String {
     if !changes.is_empty() {
         return clip(&changes.join("\n\n"), DETAIL_CHARS);
     }
+    // A file to be written, said only as what the tool was given.
+    let given = &call["rawInput"];
+    let path = given["file_path"].as_str().or(given["path"].as_str());
+    if let (Some(path), Some(content)) = (path, given["content"].as_str()) {
+        return clip(&format!("{path}\n+++ new file\n{content}"), DETAIL_CHARS);
+    }
     clip(
         &serde_json::to_string_pretty(&call["rawInput"]).unwrap_or_default(),
         DETAIL_CHARS,
     )
 }
 
-impl AgentSession for OpencodeSession {
+impl AgentSession for AcpSession {
     fn first(&mut self, turn: &TurnSpec<'_>) -> Vec<Outgoing> {
         self.prompt = Some(turn.prompt.to_owned());
         let wanted = |text: Option<&str>| text.filter(|text| !text.is_empty()).map(str::to_owned);
+        let late = self.dialect.models_come_late;
         if let Some(value) = wanted(turn.model) {
-            self.waits_for_models = true;
+            self.waits_for_models = late;
             self.todo.push_back(Setting {
                 id: ID_MODEL,
                 option: "model",
@@ -833,33 +908,34 @@ impl AgentSession for OpencodeSession {
             });
         }
         if let Some(value) = wanted(turn.effort) {
-            self.waits_for_models = true;
+            self.waits_for_models = late;
             self.todo.push_back(Setting {
                 id: ID_EFFORT,
-                option: "effort",
+                option: self.dialect.effort,
                 value,
             });
         }
         if let Some(mode) = wanted(turn.mode) {
             self.auto = mode == MODE_AUTO;
-            self.todo.push_back(Setting {
-                id: ID_MODE,
-                option: "mode",
-                value: if self.auto {
-                    AUTO_AGENT.to_owned()
-                } else {
-                    mode
-                },
-            });
+            // An agent without modes has only this library's two, and
+            // neither is its to be told.
+            if let Some(agent) = self.dialect.auto_agent {
+                self.todo.push_back(Setting {
+                    id: ID_MODE,
+                    option: "mode",
+                    value: if self.auto { agent.to_owned() } else { mode },
+                });
+            }
         }
         let folder = turn.cwd.filter(|cwd| !cwd.is_empty()).unwrap_or("/");
         let session = match wanted(turn.resume) {
             Some(id) => {
                 self.resumed = true;
                 self.session = Some(id.clone());
+                self.replaying = self.dialect.resume == "session/load";
                 request(
                     ID_SESSION,
-                    "session/resume",
+                    self.dialect.resume,
                     json!({ "sessionId": id, "cwd": folder, "mcpServers": [] }),
                 )
             }
@@ -869,16 +945,28 @@ impl AgentSession for OpencodeSession {
                 json!({ "cwd": folder, "mcpServers": [] }),
             ),
         };
-        vec![
-            Outgoing {
-                tag: TAG_HELLO.to_owned(),
-                line: hello(),
-            },
-            Outgoing {
-                tag: TAG_SESSION.to_owned(),
-                line: session,
-            },
-        ]
+        let hello = Outgoing {
+            tag: TAG_HELLO.to_owned(),
+            line: hello(),
+        };
+        let session = Outgoing {
+            tag: TAG_SESSION.to_owned(),
+            line: session,
+        };
+        match self.dialect.login {
+            // The session is refused to whoever did not sign in first.
+            Some(method) => {
+                self.held = Some(session);
+                vec![
+                    hello,
+                    Outgoing {
+                        tag: TAG_LOGIN.to_owned(),
+                        line: request(ID_LOGIN, "authenticate", json!({ "methodId": method })),
+                    },
+                ]
+            }
+            None => vec![hello, session],
+        }
     }
 
     fn line(&mut self, value: &Value, step: &mut Step) {
@@ -909,17 +997,17 @@ impl AgentSession for OpencodeSession {
         }
     }
 
-    fn encode(&mut self, action: Action) -> Result<Vec<Outgoing>, MobileError> {
+    fn encode(&mut self, action: Action) -> Result<Vec<Outgoing>, TurnError> {
         match action {
-            // A second prompt while one runs is refused by opencode.
-            Action::Prompt(_) => Err(MobileError::NotSupported),
+            // A second prompt while one runs is the next turn.
+            Action::Prompt(_) => Err(TurnError::NotSupported),
             Action::Answer(id, answer) => Ok(vec![Outgoing {
                 tag: id_tag('a', &id),
                 line: self.answer(&id, answer)?,
             }]),
             Action::Interrupt => {
                 if self.finished {
-                    return Err(MobileError::TurnEnded);
+                    return Err(TurnError::TurnEnded);
                 }
                 if self.session.is_none() {
                     self.stop_wanted = true;
@@ -929,14 +1017,18 @@ impl AgentSession for OpencodeSession {
             }
             Action::SetMode(mode) => {
                 if self.finished {
-                    return Err(MobileError::TurnEnded);
+                    return Err(TurnError::TurnEnded);
                 }
                 self.auto = mode == MODE_AUTO;
-                let value = if self.auto { AUTO_AGENT } else { mode.as_str() };
+                let Some(agent) = self.dialect.auto_agent else {
+                    // Its two modes are this library's: nothing to tell it.
+                    return Ok(Vec::new());
+                };
+                let value = if self.auto { agent } else { mode.as_str() };
                 let id = self.next_id("mode");
                 let line = self
                     .set(&id, "mode", value)
-                    .ok_or(MobileError::NotSupported)?;
+                    .ok_or(TurnError::NotSupported)?;
                 Ok(vec![Outgoing {
                     tag: format!("m.{id}"),
                     line,
@@ -944,12 +1036,12 @@ impl AgentSession for OpencodeSession {
             }
             Action::SetModel(model) => {
                 if self.finished {
-                    return Err(MobileError::TurnEnded);
+                    return Err(TurnError::TurnEnded);
                 }
                 let id = self.next_id("model");
                 let line = self
                     .set(&id, "model", &model)
-                    .ok_or(MobileError::NotSupported)?;
+                    .ok_or(TurnError::NotSupported)?;
                 Ok(vec![Outgoing {
                     tag: format!("m.{id}"),
                     line,
@@ -988,114 +1080,17 @@ impl AgentSession for OpencodeSession {
     }
 }
 
-/// The command that asks opencode what it offers, without starting a
-/// conversation: its version, the models it lists and its agents.
-pub(crate) const OPTIONS_SCRIPT: &str = r#"program=$1
-printf 'leon-version:%s\n' "$("$program" --version 2>/dev/null | tail -n 1)"
-models=$("$program" models 2>/dev/null)
-if [ -z "$models" ]; then
-    # Asked in a folder it has not worked in yet, it may answer before it
-    # knows its providers.
-    sleep 1
-    models=$("$program" models 2>/dev/null)
-fi
-printf 'leon-models:\n%s\n\nleon-agents:\n' "$models"
-"$program" debug agents 2>/dev/null
-exit 0"#;
-
-/// What [`OPTIONS_SCRIPT`] is given after the program: nothing.
-pub(crate) fn options_arguments() -> Vec<String> {
-    Vec::new()
+/// The commands a session listed.
+pub(crate) fn commands(listed: &Value) -> Vec<AgentCommand> {
+    blocks(listed)
+        .iter()
+        .filter_map(|command| {
+            let name = command["name"].as_str().filter(|name| !name.is_empty())?;
+            Some(AgentCommand::slash(
+                name,
+                command["description"].as_str(),
+                command["input"]["hint"].as_str(),
+            ))
+        })
+        .collect()
 }
-
-/// The efforts offered for every model. Which of them a model has is only
-/// known inside a conversation; one it lacks is left as that computer has it.
-const EFFORTS: &[&str] = &["low", "medium", "high", "max"];
-
-/// Reads the output of [`OPTIONS_SCRIPT`].
-pub(crate) fn parse_options(text: &str) -> AgentOptions {
-    let mut options = AgentOptions {
-        questions: true,
-        follow_ups: false,
-        live_changes: true,
-        // Until it listed its agents and its models, nothing is known.
-        assumed: true,
-        ..AgentOptions::default()
-    };
-    let (mut part, mut agents) = ("", String::new());
-    for line in text.lines() {
-        let line = line.trim_end_matches('\r');
-        if let Some(version) = line.strip_prefix("leon-version:") {
-            // `opencode v2.0.24`: the number alone.
-            options.version = version
-                .split_whitespace()
-                .last()
-                .map(|word| word.trim_start_matches('v').to_owned())
-                .filter(|text| !text.is_empty());
-            continue;
-        }
-        match line {
-            "leon-models:" => part = "models",
-            "leon-agents:" => part = "agents",
-            _ if part == "agents" => {
-                agents.push_str(line);
-                agents.push('\n');
-            }
-            _ if part == "models" => {
-                // `provider/model`, nothing else on the line.
-                let id = line.trim();
-                let Some((provider, name)) = id.split_once('/') else {
-                    continue;
-                };
-                if provider.is_empty() || name.is_empty() || id.contains(char::is_whitespace) {
-                    continue;
-                }
-                options.models.push(AgentModel {
-                    id: id.to_owned(),
-                    label: format!("{name} · {provider}"),
-                    description: None,
-                    efforts: EFFORTS.iter().map(|effort| (*effort).to_owned()).collect(),
-                });
-            }
-            _ => {}
-        }
-    }
-    let listed = agents
-        .find('[')
-        .and_then(|at| serde_json::from_str::<Value>(agents[at..].trim()).ok());
-    for agent in listed.as_ref().map(blocks).unwrap_or_default() {
-        // The agents a person works with; the others are their helpers.
-        if agent["mode"] != "primary" || agent["hidden"].as_bool() == Some(true) {
-            continue;
-        }
-        let Some(id) = agent["id"].as_str().filter(|id| !id.is_empty()) else {
-            continue;
-        };
-        options.modes.push(AgentMode {
-            id: id.to_owned(),
-            label: agent["name"].as_str().unwrap_or(id).to_owned(),
-            description: agent["description"]
-                .as_str()
-                .filter(|text| !text.is_empty())
-                .map(str::to_owned),
-            dangerous: false,
-        });
-    }
-    if options.modes.iter().any(|mode| mode.id == AUTO_AGENT) {
-        options.default_mode = Some(AUTO_AGENT.to_owned());
-        options.modes.push(AgentMode {
-            id: MODE_AUTO.to_owned(),
-            label: "Build, never asking".to_owned(),
-            description: Some(
-                "Every permission it asks for is allowed at once, as `opencode --auto` does."
-                    .to_owned(),
-            ),
-            dangerous: true,
-        });
-    }
-    options.assumed = options.modes.is_empty() && options.models.is_empty();
-    options
-}
-
-#[cfg(test)]
-mod tests;

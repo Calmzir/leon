@@ -101,7 +101,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             libfontconfig1-dev libwayland-dev libxkbcommon-dev \
-            libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev
+            libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev \
+            cmake libclang-dev libasound2-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -153,7 +154,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             libfontconfig1-dev libwayland-dev libxkbcommon-dev \
-            libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev
+            libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev \
+            cmake libclang-dev libasound2-dev
 
       - uses: dtolnay/rust-toolchain@stable
 

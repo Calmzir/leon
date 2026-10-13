@@ -335,6 +335,16 @@ Every command and its shortcuts.
 Read-only: every command with its chords, generated from the shortcut registry.
 Shortcuts are not customisable yet.
 
+## Experimental
+
+What is still being tried. Off until you turn it on, and it may change.
+
+| Setting | Key | Values | Default | Description |
+| --- | --- | --- | --- | --- |
+| Agent interface | `agent_interface` | `terminal`, `chat` | `terminal` | Where a session of Claude Code, Codex, opencode, Grok or Cursor runs: in a terminal, with the agent's own program, or in Leon's own interface, a conversation that looks and works the same for every agent. Leon's own is experimental. It works on every machine: this computer, one reached over SSH and a paired computer. An agent it cannot drive starts in a terminal as before. Takes effect for sessions started after it is changed. (macOS and Linux only.) |
+| Dictation language | `dictation_language` | `system`, `auto`, `ar`, `ca`, `zh`, `cs`, `da`, `nl`, `en`, `fi`, `fr`, `de`, `el`, `he`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `no`, `pl`, `pt`, `ro`, `ru`, `es`, `sv`, `th`, `tr`, `uk`, `vi` | `system` | The language you speak when you dictate into a conversation of Leon's own interface. It decides which speech models are offered: English has models of its own, every other language shares the ones that know many. `Whichever is heard` lets the model tell, which is slower and sometimes wrong for a short sentence. Nothing is downloaded until you choose a model, and what you say stays on this computer. (macOS and Linux only.) |
+| Dictation model | `dictation_model` | text | empty | The speech model dictation uses: `tiny`, `base` or `small`, with `.en` for the ones that know only English. Set by the list the Dictate button or `/voice` opens, which downloads the model first. Empty, or a model that is not on this computer: the most accurate one that is. (macOS and Linux only.) |
+
 ## Advanced & About
 
 Folders, logging and starting over.

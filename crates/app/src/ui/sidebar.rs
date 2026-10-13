@@ -752,8 +752,12 @@ impl Shell {
                 let running = self
                     .live
                     .of_history(&session.id)
-                    .filter(|_| self.placement.merged.contains(&session.id))
-                    .map(|live| (live.id, live.state(cx)));
+                    .map(|live| (live.id, live.state(cx)))
+                    .or_else(|| {
+                        let id = self.chat_of_history(&session.id)?;
+                        Some((id, self.chats.get(&id)?.state()))
+                    })
+                    .filter(|_| self.placement.merged.contains(&session.id));
                 // Four states, told apart at a glance: running here (the
                 // agent's colour, a light), running elsewhere (the agent's
                 // colour, a badge that says where), asleep (dimmed, a moon)
@@ -888,13 +892,12 @@ impl Shell {
                     .into_any_element()
             }
             Kind::Live(entry) => {
-                let session = self.live.get(entry.id);
-                let state = session.map_or(LiveState::Starting, |session| session.state(cx));
+                let (shown, state) = self.live_row(entry.id, cx);
                 let asleep = entry.asleep.is_some();
                 let text = match &entry.asleep {
                     Some(label) if !label.is_empty() => label.clone(),
                     Some(_) => entry.agent.map_or("Shell", format::agent_name).to_owned(),
-                    None => session.map_or_else(String::new, |session| session.label()),
+                    None => shown,
                 };
                 let account = entry.account.clone().filter(|_| entry.agent.is_some());
                 let name: SharedString = match &account {
@@ -1149,10 +1152,8 @@ impl Shell {
         }
         terminals
             .into_iter()
-            .filter_map(|terminal| self.live.get(terminal))
-            .fold(Activity::Off, |all, session| {
-                all.most_urgent(session.activity)
-            })
+            .filter_map(|terminal| self.leaf_activity(terminal))
+            .fold(Activity::Off, Activity::most_urgent)
     }
 
     /// How the terminals of a project are doing: the most urgent state of its

@@ -16,6 +16,7 @@ mod address;
 mod agent_usage;
 mod avatar;
 mod brand;
+mod chat;
 mod cli;
 mod connect;
 mod diagnose;
@@ -59,6 +60,7 @@ mod trust;
 mod ui;
 mod updates;
 mod usage;
+mod voice;
 
 use gpui_kit::{
     px, size, App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
@@ -225,6 +227,7 @@ fn main() {
             SshOptions::without_multiplexing()
         }
     };
+    let chat_ssh = ssh.clone();
     // This installation's long-term keys (for machines reached through a
     // relay) and the one place that decides where a command starts: here, or
     // through a relay on the other computer.
@@ -302,6 +305,13 @@ fn main() {
         ),
         handle: runtime.handle().clone(),
     });
+    // A conversation's turn runs on the machine of its session: here, over
+    // SSH, or through the relay.
+    let chat_spawner: Arc<dyn chat::turn::Spawner> = Arc::new(chat::reach::Reach::new(
+        chat_ssh,
+        hub.clone(),
+        runtime.handle().clone(),
+    ));
     let backend = Rc::new(remote::RoutingBackend::new(hub, runtime.handle().clone()));
     // The keeper of durable local sessions, started the first time a session
     // is opened with the setting on. Where there are no POSIX terminals there
@@ -327,6 +337,12 @@ fn main() {
     let started = engine.clone();
 
     // The user's themes, before anything asks for a theme.
+    // Dictation: nothing is read or downloaded until a person asks.
+    #[cfg(unix)]
+    let voice: std::sync::Arc<dyn voice::Voice> =
+        std::sync::Arc::new(voice::Local::new(&data_dir, runtime.handle().clone()));
+    #[cfg(not(unix))]
+    let voice: std::sync::Arc<dyn voice::Voice> = std::sync::Arc::new(voice::Unavailable);
     let themes_dir = data_dir.join(ui::THEMES_FOLDER);
     let summary = theme::user::reload(&themes_dir);
     for id in &summary.loaded {
@@ -404,6 +420,8 @@ fn main() {
                         durable: durable.clone(),
                         den_cast,
                         memory: memory_terminals.clone(),
+                        voice: voice.clone(),
+                        chat_spawner: chat_spawner.clone(),
                         ..ui::Options::default()
                     };
                     let mut shell = ui::Shell::new(engine, options, window, cx);

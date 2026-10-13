@@ -28,7 +28,7 @@ const ATTEMPTS: usize = 3;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// An address outside the allow-list.
-    #[error("refusing an address that is not GitHub's release storage: {0}")]
+    #[error("refusing an address outside the hosts Leon downloads from: {0}")]
     Refused(String),
     /// The transfer failed.
     #[error(transparent)]

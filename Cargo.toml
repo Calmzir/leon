@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/leon-mark",
+    "crates/leon-turn",
+    "crates/leon-voice",
     "crates/leon-den",
     "crates/leon-core",
     "crates/leon-history",
@@ -40,6 +42,8 @@ leon-host = { path = "crates/leon-host" }
 leon-wire = { path = "crates/leon-wire" }
 leon-link = { path = "crates/leon-link" }
 leon-update = { path = "crates/leon-update" }
+leon-turn = { path = "crates/leon-turn" }
+leon-voice = { path = "crates/leon-voice", default-features = false }
 
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 rusqlite = { version = "0.40", features = ["bundled"] }

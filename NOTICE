@@ -38,6 +38,13 @@ THIRD-PARTY DEPENDENCIES
   (BSD-3-Clause, Copyright (c) Isis Agora Lovecruft, Henry de Valence),
   zeroize, postcard and tokio-tungstenite (MIT OR Apache-2.0).
 
+  Dictation uses whisper.cpp and ggml (MIT, Copyright (c) 2023-2026 The ggml
+  authors), built into Leon through whisper-rs (Unlicense), and cpal
+  (Apache-2.0) for the microphone. The speech models are not part of Leon:
+  a person downloads the one they choose from
+  https://huggingface.co/ggerganov/whisper.cpp. They are OpenAI's Whisper
+  models (MIT, Copyright (c) 2022 OpenAI) in whisper.cpp's format.
+
 BUNDLED ASSETS (sources and licences: crates/app/assets/ASSETS.md)
   Fonts, each with its licence text next to it in crates/app/assets/fonts:
     Space Grotesk   Copyright 2020 The Space Grotesk Project Authors.

@@ -174,7 +174,11 @@ impl Shell {
             Main::Live(id) => match (self.files.get(id), self.changes.get(id)) {
                 (Some(doc), _) => Some(doc.path.clone()),
                 (None, Some(view)) => Some(view.target.path.clone()),
-                (None, None) => self.live.get(*id).map(|session| session.cwd.clone()),
+                (None, None) => self
+                    .live
+                    .get(*id)
+                    .map(|session| session.cwd.clone())
+                    .or_else(|| self.chats.get(id).map(|chat| chat.cwd.clone())),
             },
             Main::Session(transcript) => Some(transcript.session.cwd.clone()),
             Main::Empty | Main::Den | Main::Tasks => None,
@@ -212,7 +216,11 @@ impl Shell {
     fn main_agent(&self) -> Option<AgentId> {
         match &self.main {
             Main::Session(transcript) => Some(transcript.session.agent),
-            Main::Live(id) => self.live.get(*id).and_then(|session| session.shown_agent()),
+            Main::Live(id) => self
+                .live
+                .get(*id)
+                .and_then(|session| session.shown_agent())
+                .or_else(|| self.chats.get(id).map(|chat| chat.agent)),
             _ => None,
         }
     }
@@ -261,6 +269,24 @@ impl Shell {
             Main::Live(id) if self.files.contains_key(id) => self.file_heading(&self.files[id]),
             Main::Live(id) if self.changes.contains_key(id) => {
                 self.changes_heading(&self.changes[id])
+            }
+            Main::Live(id) if self.chats.contains_key(id) => {
+                let chat = &self.chats[id];
+                let who = format::agent_tag(chat.agent).to_owned()
+                    + &chat
+                        .account
+                        .as_deref()
+                        .map(|account| format!(" \u{b7} {}", format::account_tag(account)))
+                        .unwrap_or_default();
+                let machine = self
+                    .snapshot
+                    .machine(&chat.machine)
+                    .map_or_else(String::new, |machine| machine.name.to_uppercase());
+                (
+                    "Session",
+                    chat.label(),
+                    format!("{who} \u{b7} {machine} \u{b7} {}", chat.cwd),
+                )
             }
             Main::Live(id) => match self.live.get(*id) {
                 Some(session) => {
@@ -912,7 +938,8 @@ impl Shell {
     /// Whether a terminal of Leon runs this history session in its own
     /// folder: what the sidebar marks with a green light.
     fn running_here(&self, id: &leon_core::SessionId) -> bool {
-        self.live.of_history(id).is_some() && self.placement.merged.contains(id)
+        (self.live.of_history(id).is_some() || self.chat_of_history(id).is_some())
+            && self.placement.merged.contains(id)
     }
 
     /// One terminal running in the worktree screen: its agent, label and
@@ -925,10 +952,7 @@ impl Shell {
         colours: &Palette,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let (label, state) = self.live.get(id).map_or_else(
-            || (String::new(), LiveState::Starting),
-            |session| (session.label(), session.state(cx)),
-        );
+        let (label, state) = self.live_row(id, cx);
         let lead = match agent {
             Some(agent) => agent_icon(agent, px(14.), colours).into_any_element(),
             None => icon(IconName::Terminal, px(14.), colours.text_muted).into_any_element(),

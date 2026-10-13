@@ -145,6 +145,7 @@ pub const LAYOUT: &[(&str, &[Entry])] = &[
             Sep,
             Cmd(C::SaveOutput),
             Cmd(C::SaveOutputAnsi),
+            Cmd(C::Dictate),
             Sep,
             Cmd(C::SleepSession),
             Cmd(C::CloseSession),

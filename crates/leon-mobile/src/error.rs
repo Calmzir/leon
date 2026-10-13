@@ -102,6 +102,17 @@ pub enum MobileError {
     },
 }
 
+impl From<leon_turn::TurnError> for MobileError {
+    fn from(error: leon_turn::TurnError) -> Self {
+        match error {
+            leon_turn::TurnError::UnknownQuestion => Self::UnknownQuestion,
+            leon_turn::TurnError::BadAnswer => Self::BadAnswer,
+            leon_turn::TurnError::NotSupported => Self::NotSupported,
+            leon_turn::TurnError::TurnEnded => Self::TurnEnded,
+        }
+    }
+}
+
 impl From<IdentityError> for MobileError {
     fn from(error: IdentityError) -> Self {
         MobileError::Storage {

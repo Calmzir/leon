@@ -44,13 +44,15 @@ pub enum Section {
     Window,
     /// Every command with its chords (read-only).
     Keyboard,
+    /// What is still being tried: off until it is asked for.
+    Experimental,
     /// Version, folders, logging and reset.
     Advanced,
 }
 
 impl Section {
     /// Every section, in order.
-    pub const ALL: [Section; 12] = [
+    pub const ALL: [Section; 13] = [
         Section::Appearance,
         Section::Terminal,
         Section::Editor,
@@ -62,8 +64,23 @@ impl Section {
         Section::Notifications,
         Section::Window,
         Section::Keyboard,
+        Section::Experimental,
         Section::Advanced,
     ];
+
+    /// Whether the section is listed on this platform: the experimental one
+    /// only where something is being tried.
+    pub fn listed(self) -> bool {
+        self != Section::Experimental || of_section(self).next().is_some()
+    }
+
+    /// The sections listed on this platform, in order.
+    pub fn listed_here() -> Vec<Section> {
+        Section::ALL
+            .into_iter()
+            .filter(|section| section.listed())
+            .collect()
+    }
 
     /// Its heading.
     pub fn title(self) -> &'static str {
@@ -79,6 +96,7 @@ impl Section {
             Section::Notifications => "Notifications",
             Section::Window => "Sidebar & window",
             Section::Keyboard => "Keyboard",
+            Section::Experimental => "Experimental",
             Section::Advanced => "Advanced & About",
         }
     }
@@ -103,6 +121,9 @@ impl Section {
             }
             Section::Window => "The sidebar and what quitting asks.",
             Section::Keyboard => "Every command and its shortcuts.",
+            Section::Experimental => {
+                "What is still being tried. Off until you turn it on, and it may change."
+            }
             Section::Advanced => "Folders, logging and starting over.",
         }
     }
@@ -343,6 +364,42 @@ const OPEN_MODES: Choices = Choices::Fixed(&[
     ("resume", "Resume in a terminal"),
     ("transcript", "Open the transcript"),
 ]);
+/// The languages of dictation: the system's own, whichever is heard, then
+/// those of `leon_voice::catalog::LANGUAGES`, which a test holds this to.
+const DICTATION_LANGUAGES: Choices = Choices::Fixed(&[
+    ("system", "The system's"),
+    ("auto", "Whichever is heard"),
+    ("ar", "Arabic"),
+    ("ca", "Catalan"),
+    ("zh", "Chinese"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("nl", "Dutch"),
+    ("en", "English"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("no", "Norwegian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("es", "Spanish"),
+    ("sv", "Swedish"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi", "Vietnamese"),
+]);
+const INTERFACES: Choices = Choices::Fixed(&[("terminal", "Terminal"), ("chat", "Leon's own")]);
 const RESTORE: Choices =
     Choices::Fixed(&[("ask", "Ask me"), ("always", "Always"), ("never", "Never")]);
 const RESTORE_RESUME: Choices = Choices::Fixed(&[("shown", "When shown"), ("all", "All at once")]);
@@ -645,7 +702,43 @@ const BASE: &[Def] = &[
         K::Toggle,
         D::Bool(true),
     ),
-    // ----- agents
+    // ----- experimental
+    only(
+        def(
+            "agent_interface",
+            S::Experimental,
+            "Agent interface",
+            "Where a session of Claude Code, Codex, opencode, Grok or Cursor runs: in a terminal, with the agent's own program, or in Leon's own interface, a conversation that looks and works the same for every agent. Leon's own is experimental. It works on every machine: this computer, one reached over SSH and a paired computer. An agent it cannot drive starts in a terminal as before. Takes effect for sessions started after it is changed.",
+            "chat conversation unified native interface beta experimental protocol terminal tui messages permissions",
+            K::Choice(INTERFACES),
+            D::Text("terminal"),
+        ),
+        Platform::Unix,
+    ),
+    only(
+        def(
+            "dictation_language",
+            S::Experimental,
+            "Dictation language",
+            "The language you speak when you dictate into a conversation of Leon's own interface. It decides which speech models are offered: English has models of its own, every other language shares the ones that know many. `Whichever is heard` lets the model tell, which is slower and sometimes wrong for a short sentence. Nothing is downloaded until you choose a model, and what you say stays on this computer.",
+            "voice speech microphone dictate talk speak language whisper model transcribe",
+            K::Choice(DICTATION_LANGUAGES),
+            D::Text("system"),
+        ),
+        Platform::Unix,
+    ),
+    only(
+        def(
+            "dictation_model",
+            S::Experimental,
+            "Dictation model",
+            "The speech model dictation uses: `tiny`, `base` or `small`, with `.en` for the ones that know only English. Set by the list the Dictate button or `/voice` opens, which downloads the model first. Empty, or a model that is not on this computer: the most accurate one that is.",
+            "voice speech microphone dictate whisper model download tiny base small",
+            K::Text { placeholder: "The most accurate installed" },
+            D::Text(""),
+        ),
+        Platform::Unix,
+    ),
     def(
         "history_open",
         S::Agents,
@@ -1987,6 +2080,41 @@ pub fn render_docs() -> String {
 
 #[cfg(test)]
 mod tests {
+    /// What is still being tried has a section of its own, is off as it
+    /// comes, and the section is listed only where it holds something.
+    #[test]
+    fn what_is_being_tried_is_in_its_own_section_and_off_as_it_comes() {
+        let keys: Vec<&str> = settings()
+            .iter()
+            .filter(|def| def.section == Section::Experimental)
+            .map(|def| def.key)
+            .collect();
+        assert_eq!(
+            keys,
+            ["agent_interface", "dictation_language", "dictation_model"]
+        );
+        assert_eq!(
+            find("agent_interface").unwrap().default,
+            Initial::Text("terminal")
+        );
+        let listed = Section::listed_here();
+        assert_eq!(
+            listed.contains(&Section::Experimental),
+            Platform::Unix.here()
+        );
+        assert_eq!(listed.last(), Some(&Section::Advanced));
+    }
+
+    #[test]
+    fn the_languages_of_dictation_are_the_catalogues_after_the_two_that_name_none() {
+        let super::Choices::Fixed(offered) = super::DICTATION_LANGUAGES else {
+            panic!("the languages of dictation are a fixed list");
+        };
+        assert_eq!(offered[0].0, "system");
+        assert_eq!(offered[1].0, "auto");
+        assert_eq!(&offered[2..], leon_voice::catalog::LANGUAGES);
+    }
+
     #[test]
     fn the_usage_network_sources_are_on_by_default_and_the_refresh_is_ten_minutes() {
         let store = Store::new();

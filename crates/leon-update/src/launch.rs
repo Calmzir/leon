@@ -243,15 +243,32 @@ pub fn spawn_with(args: Vec<OsString>) -> impl Fn(&Path, bool) -> std::io::Resul
 /// In a process started with [`WAIT_FOR_PARENT`]: waits until the process that
 /// started it lets go (closes the pipe, or ends), or `longest` has passed.
 /// Anywhere else it returns at once.
+///
+/// Call it before the process has other threads: it takes the mark out of
+/// the environment.
 pub fn wait_for_parent(longest: Duration) {
-    if std::env::var_os(WAIT_FOR_PARENT).is_none() {
-        return;
+    if handed_over() {
+        wait_for(std::io::stdin(), longest);
     }
+}
+
+/// Whether this process was started with [`WAIT_FOR_PARENT`]. The mark is
+/// taken out of the environment as it is read: it is about this process and
+/// the one that started it, and what this process starts (a shell in a
+/// terminal, another window from that shell) would wait on its own input
+/// for no one.
+fn handed_over() -> bool {
+    let marked = std::env::var_os(WAIT_FOR_PARENT).is_some();
+    std::env::remove_var(WAIT_FOR_PARENT);
+    marked
+}
+
+/// Waits until `input` ends, or `longest` has passed.
+fn wait_for(input: impl std::io::Read + Send + 'static, longest: Duration) {
     let (done, ended) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        use std::io::Read as _;
+        let mut input = input;
         let mut sink = [0u8; 64];
-        let mut input = std::io::stdin().lock();
         while matches!(input.read(&mut sink), Ok(read) if read > 0) {}
         let _ = done.send(());
     });
@@ -980,10 +997,44 @@ mod tests {
         assert_eq!(w.layout.pending(), None);
     }
 
+    /// One test, not two: the mark is in the environment of the whole test
+    /// binary, and may be there before it starts (a shell inside a window
+    /// that was itself restarted to update).
     #[test]
-    fn waiting_for_a_parent_returns_at_once_outside_a_hand_over() {
+    fn the_mark_of_a_hand_over_is_read_once_and_not_passed_on() {
+        std::env::set_var(WAIT_FOR_PARENT, "1");
+        assert!(handed_over());
+        assert_eq!(std::env::var_os(WAIT_FOR_PARENT), None);
+        assert!(!handed_over());
+
         let before = Instant::now();
         wait_for_parent(Duration::from_secs(5));
         assert!(before.elapsed() < Duration::from_secs(1));
+    }
+
+    /// Input that never ends: a parent that never lets go.
+    struct Held;
+
+    impl std::io::Read for Held {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(Duration::from_secs(3600));
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn waiting_ends_when_the_parent_lets_go() {
+        let before = Instant::now();
+        wait_for(&b"still here"[..], Duration::from_secs(5));
+        assert!(before.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn waiting_gives_up_on_a_parent_that_never_lets_go() {
+        let before = Instant::now();
+        wait_for(Held, Duration::from_millis(50));
+        let waited = before.elapsed();
+        assert!(waited >= Duration::from_millis(50));
+        assert!(waited < Duration::from_secs(1));
     }
 }

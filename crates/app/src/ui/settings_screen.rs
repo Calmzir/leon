@@ -497,7 +497,7 @@ impl Shell {
     }
 
     fn settings_step_section(&mut self, delta: i32, cx: &mut Context<Self>) {
-        let all = Section::ALL;
+        let all = Section::listed_here();
         let at = all
             .iter()
             .position(|section| *section == self.settings_ui.section)
@@ -822,7 +822,7 @@ impl Shell {
             .py_2()
             .flex()
             .flex_col();
-        for (number, section) in Section::ALL.into_iter().enumerate() {
+        for (number, section) in Section::listed_here().into_iter().enumerate() {
             let on = section == ui.section && !searching;
             let here = on && ui.zone == super::settings_screen::Zone::Sections;
             nav = nav.child(

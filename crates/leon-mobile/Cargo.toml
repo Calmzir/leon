@@ -15,6 +15,9 @@ crate-type = ["lib", "staticlib", "cdylib"]
 [dependencies]
 leon-link.workspace = true
 leon-wire.workspace = true
+# The agents and how each is spoken to: the unified protocol the desktop
+# application drives them with too.
+leon-turn.workspace = true
 # The desktop's own detection of a project's logo, run through the session
 # (see `src/logo.rs`). `leon-core` brings its bundled SQLite along, unused here.
 leon-core.workspace = true

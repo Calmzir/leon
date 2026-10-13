@@ -10,7 +10,7 @@
 //!
 //! Each line either way is one JSON value in the shape of JSON-RPC, without
 //! the `jsonrpc` member: a request has `id` and `method`, an answer `id` and
-//! `result` or `error`, a notification `method` only. The phone writes:
+//! `result` or `error`, a notification `method` only. The client writes:
 //!
 //! * `initialize`, the `initialized` notification, then `thread/start` or
 //!   `thread/resume` (an id any Codex gave a conversation, the interactive
@@ -45,14 +45,14 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use serde_json::{json, Map, Value};
 
 use crate::agents::{strings, Action, AgentSession, Outgoing, Step, TurnSpec};
-use crate::bridge::{id_tag, tag_id};
-use crate::claude::{AgentMode, AgentModel, AgentOptions};
-use crate::error::MobileError;
+use crate::claude::{AgentCommand, AgentMode, AgentModel, AgentOptions};
+use crate::error::TurnError;
 use crate::events::{
     blocks, cap_detail, clip, content_text, diff_lines, first_line, input_detail, input_summary,
     last_line, text_detail, text_of, written_detail, Answer, ChoiceOption, ChoiceQuestion,
     PermissionChoice, PermissionEffect, QuestionKind, TurnEvent,
 };
+use crate::tag::{id_tag, tag_id};
 
 /// The ids of this client's own requests. They are fixed, so that a turn
 /// read again knows which answer is which.
@@ -101,12 +101,12 @@ const UNREAD: &[&str] = &[
 ];
 
 /// The command line of a turn. What the turn is about travels in requests.
-pub(crate) fn argv(turn: &TurnSpec<'_>) -> Vec<String> {
+pub fn argv(turn: &TurnSpec<'_>) -> Vec<String> {
     strings(&[turn.program, "app-server"])
 }
 
 /// A session for one turn.
-pub(crate) fn session(unique: u64) -> Box<dyn AgentSession> {
+pub fn session(unique: u64) -> Box<dyn AgentSession> {
     Box::new(CodexSession {
         unique,
         prompt: None,
@@ -132,7 +132,7 @@ fn request(id: &str, method: &str, params: Value) -> String {
 }
 
 /// The opening request, as a line.
-pub(crate) fn hello() -> String {
+pub fn hello() -> String {
     request(
         ID_HELLO,
         "initialize",
@@ -230,6 +230,45 @@ enum Sort {
     Input,
     /// A tool server's question.
     Elicitation,
+}
+
+/// What the server does itself when asked by name, where any other prompt
+/// is a turn of the model's.
+#[derive(Debug, PartialEq, Eq)]
+enum Native<'a> {
+    /// `/compact`: the conversation so far becomes a summary of itself.
+    Compact,
+    /// `/review`, then what to look at: nothing is what is not committed.
+    Review(&'a str),
+}
+
+/// The server's own doing a prompt asks for, when it is one.
+fn native(prompt: &str) -> Option<Native<'_>> {
+    let prompt = prompt.trim();
+    let (name, rest) = prompt
+        .split_once(char::is_whitespace)
+        .unwrap_or((prompt, ""));
+    match name {
+        "/compact" if rest.trim().is_empty() => Some(Native::Compact),
+        "/review" => Some(Native::Review(rest.trim())),
+        _ => None,
+    }
+}
+
+/// The server's own doings, as [`AgentOptions::commands`] lists them.
+fn natives() -> Vec<AgentCommand> {
+    vec![
+        AgentCommand::slash(
+            "compact",
+            Some("Make the conversation so far a summary of itself."),
+            None,
+        ),
+        AgentCommand::slash(
+            "review",
+            Some("Review what is not committed, or what you say after it."),
+            Some("[what to look at]"),
+        ),
+    ]
 }
 
 struct CodexSession {
@@ -395,13 +434,33 @@ impl CodexSession {
                     return;
                 };
                 let line = match &self.prompt {
-                    Some(prompt) => {
-                        let mut params = json!({ "threadId": thread, "input": text_input(prompt) });
-                        if let Some(effort) = &self.effort {
-                            params["effort"] = json!(effort);
+                    Some(prompt) => match native(prompt) {
+                        Some(Native::Compact) => request(
+                            ID_TURN,
+                            "thread/compact/start",
+                            json!({ "threadId": thread }),
+                        ),
+                        Some(Native::Review(about)) => {
+                            let target = if about.is_empty() {
+                                json!({ "type": "uncommittedChanges" })
+                            } else {
+                                json!({ "type": "custom", "instructions": about })
+                            };
+                            request(
+                                ID_TURN,
+                                "review/start",
+                                json!({ "threadId": thread, "target": target }),
+                            )
                         }
-                        request(ID_TURN, "turn/start", params)
-                    }
+                        None => {
+                            let mut params =
+                                json!({ "threadId": thread, "input": text_input(prompt) });
+                            if let Some(effort) = &self.effort {
+                                params["effort"] = json!(effort);
+                            }
+                            request(ID_TURN, "turn/start", params)
+                        }
+                    },
                     // This process found the turn running and was never told
                     // the prompt. Whoever started it wrote `turn/start`
                     // under this tag: if that arrived, this line is never
@@ -570,8 +629,8 @@ impl CodexSession {
         step.events.push(TurnEvent::Question { id, kind });
     }
 
-    fn answer(&self, id: &str, answer: Answer) -> Result<Value, MobileError> {
-        let asked = self.asked.get(id).ok_or(MobileError::UnknownQuestion)?;
+    fn answer(&self, id: &str, answer: Answer) -> Result<Value, TurnError> {
+        let asked = self.asked.get(id).ok_or(TurnError::UnknownQuestion)?;
         let result = match (&asked.sort, answer) {
             (Sort::Decision(decisions), Answer::Permission { choice_id, .. }) => {
                 let decision = match choice_id.strip_prefix(CHOICE_DECISION) {
@@ -579,10 +638,10 @@ impl CodexSession {
                         .parse::<usize>()
                         .ok()
                         .and_then(|at| decisions.get(at))
-                        .ok_or(MobileError::BadAnswer)?
+                        .ok_or(TurnError::BadAnswer)?
                         .clone(),
                     None if choice_id == CHOICE_DENY => refusal(decisions),
-                    None => return Err(MobileError::BadAnswer),
+                    None => return Err(TurnError::BadAnswer),
                 };
                 json!({ "decision": decision })
             }
@@ -601,7 +660,7 @@ impl CodexSession {
                     GRANT_TURN => granted("turn"),
                     GRANT_SESSION => granted("session"),
                     CHOICE_DENY => json!({ "permissions": {}, "scope": "turn" }),
-                    _ => return Err(MobileError::BadAnswer),
+                    _ => return Err(TurnError::BadAnswer),
                 }
             }
             (Sort::Input, Answer::Choices { answers }) => {
@@ -625,9 +684,9 @@ impl CodexSession {
             (Sort::Elicitation, Answer::Permission { choice_id, .. }) => match choice_id.as_str() {
                 ELICIT_ACCEPT => json!({ "action": "accept", "content": {}, "_meta": null }),
                 CHOICE_DENY => json!({ "action": "decline", "content": null, "_meta": null }),
-                _ => return Err(MobileError::BadAnswer),
+                _ => return Err(TurnError::BadAnswer),
             },
-            _ => return Err(MobileError::BadAnswer),
+            _ => return Err(TurnError::BadAnswer),
         };
         Ok(json!({ "id": asked.id, "result": result }))
     }
@@ -1110,11 +1169,11 @@ impl AgentSession for CodexSession {
         }
     }
 
-    fn encode(&mut self, action: Action) -> Result<Vec<Outgoing>, MobileError> {
+    fn encode(&mut self, action: Action) -> Result<Vec<Outgoing>, TurnError> {
         match action {
             Action::Prompt(text) => {
                 if self.finished {
-                    return Err(MobileError::TurnEnded);
+                    return Err(TurnError::TurnEnded);
                 }
                 match self.steer(&text) {
                     Some(outgoing) => Ok(vec![outgoing]),
@@ -1130,7 +1189,7 @@ impl AgentSession for CodexSession {
             }]),
             Action::Interrupt => {
                 if self.finished {
-                    return Err(MobileError::TurnEnded);
+                    return Err(TurnError::TurnEnded);
                 }
                 match self.interrupt() {
                     Some(outgoing) => Ok(vec![outgoing]),
@@ -1141,7 +1200,7 @@ impl AgentSession for CodexSession {
                 }
             }
             // A thread's mode and model are those it was started with.
-            Action::SetMode(_) | Action::SetModel(_) => Err(MobileError::NotSupported),
+            Action::SetMode(_) | Action::SetModel(_) => Err(TurnError::NotSupported),
         }
     }
 
@@ -1181,44 +1240,53 @@ impl AgentSession for CodexSession {
 }
 
 /// The command that asks Codex what it offers: its version, then the answers
-/// of its server to the requests given as `$2`…, read until both questions
-/// (`model/list`, `config/read`) are answered, in whichever order. The
-/// server ends when its input does, so its input is a pipe this holds open
-/// until then.
-pub(crate) const OPTIONS_SCRIPT: &str = r#"program=$1; shift
+/// of its server to the requests given as `$2`…, in whichever order they
+/// come. Its models and its configuration (`model/list`, `config/read`) are
+/// waited for; its skills (`skills/list`) a moment longer, because a server
+/// may be slow to list them and what it offers is still worth knowing
+/// without. The server ends when its input does, so its input is a pipe
+/// held open by a process of its own, which is ended when the answers are
+/// in, and ends by itself if they never are.
+pub const OPTIONS_SCRIPT: &str = r#"program=$1; shift
 printf 'leon-version:%s\n' "$("$program" --version 2>/dev/null | tail -n 1)"
 pipe="${TMPDIR:-/tmp}/leon-options.$$"
 rm -f "$pipe"
 mkfifo "$pipe" || exit 0
 trap 'rm -f "$pipe"' EXIT
+( printf '%s\n' "$@"; exec sleep 20 ) >"$pipe" 2>/dev/null &
+writer=$!
 "$program" app-server <"$pipe" 2>/dev/null | {
-    exec 9>"$pipe"
-    printf '%s\n' "$@" >&9
-    models=; config=
+    models=; config=; skills=; grace=
     while IFS= read -r line; do
         printf '%s\n' "$line"
         case "$line" in
         *'"id":"leon-models"'*) models=1 ;;
         *'"id":"leon-config"'*) config=1 ;;
+        *'"id":"leon-skills"'*) skills=1 ;;
         esac
-        [ "$models$config" = 11 ] && break
+        [ "$models$config$skills" = 111 ] && break
+        if [ "$models$config" = 11 ] && [ -z "$grace" ]; then
+            grace=1
+            ( sleep 2; kill "$writer" ) >/dev/null 2>&1 &
+        fi
     done
-    exec 9>&-
+    kill "$writer" 2>/dev/null
 }
 exit 0"#;
 
 /// What [`OPTIONS_SCRIPT`] is given after the program: the requests.
-pub(crate) fn options_arguments() -> Vec<String> {
+pub fn options_arguments() -> Vec<String> {
     vec![
         hello(),
         json!({ "method": "initialized" }).to_string(),
         request("leon-models", "model/list", json!({})),
         request("leon-config", "config/read", json!({})),
+        request("leon-skills", "skills/list", json!({})),
     ]
 }
 
 /// Reads the output of [`OPTIONS_SCRIPT`].
-pub(crate) fn parse_options(text: &str) -> AgentOptions {
+pub fn parse_options(text: &str) -> AgentOptions {
     let mut options = AgentOptions {
         modes: MODES
             .iter()
@@ -1229,6 +1297,7 @@ pub(crate) fn parse_options(text: &str) -> AgentOptions {
                 dangerous: mode.2 == "danger-full-access",
             })
             .collect(),
+        commands: natives(),
         questions: true,
         follow_ups: true,
         live_changes: false,
@@ -1269,6 +1338,29 @@ pub(crate) fn parse_options(text: &str) -> AgentOptions {
                         })
                     })
                     .collect();
+            }
+            Some("leon-skills") => {
+                // A skill is asked for by naming it after a dollar sign.
+                for skill in blocks(&result["data"])
+                    .iter()
+                    .flat_map(|folder| blocks(&folder["skills"]))
+                {
+                    let Some(name) = skill["name"].as_str().filter(|name| !name.is_empty()) else {
+                        continue;
+                    };
+                    if skill["enabled"].as_bool() == Some(false)
+                        || options.commands.iter().any(|have| have.name == name)
+                    {
+                        continue;
+                    }
+                    let says = skill["shortDescription"]
+                        .as_str()
+                        .or(skill["description"].as_str());
+                    options.commands.push(AgentCommand {
+                        insert: format!("${name}"),
+                        ..AgentCommand::slash(name, says, None)
+                    });
+                }
             }
             Some("leon-config") => {
                 let config = &result["config"];

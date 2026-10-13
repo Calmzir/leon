@@ -1,0 +1,18 @@
+[package]
+name = "leon-turn"
+description = "Leon's unified agent protocol: one turn, its events and its questions, the same whatever the agent is."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# With `preserve_order`: the arguments of a tool are shown in the order the
+# agent wrote them, and the same whether this crate is built alone (for the
+# phone) or with the workspace, where the desktop's dependencies turn it on.
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -10,7 +10,7 @@
 //!        [--effort <level>] [--add-dir <dir>…]
 //! ```
 //!
-//! Each line either way is one JSON value. The phone writes:
+//! Each line either way is one JSON value. The client writes:
 //!
 //! * `{"type":"control_request","request_id":…,"request":{"subtype":"initialize"}}`
 //!   first; the answer lists the models;
@@ -40,12 +40,12 @@ use std::collections::{BTreeMap, HashSet};
 use serde_json::{json, Map, Value};
 
 use crate::agents::{strings, Action, AgentSession, Outgoing, Step, TurnSpec};
-use crate::bridge::{id_tag, tag_id};
-use crate::error::MobileError;
+use crate::error::TurnError;
 use crate::events::{
     blocks, input_summary, text_of, Answer, ChoiceOption, ChoiceQuestion, PermissionChoice,
     PermissionEffect, QuestionKind, Reader, TurnEvent,
 };
+use crate::tag::{id_tag, tag_id};
 
 /// The tag of the opening request.
 const TAG_HELLO: &str = "h.init";
@@ -57,7 +57,7 @@ const DENIED: &str = "The user denied this tool use.";
 const KEEP_PLANNING: &str = "The user wants to keep planning before any change is made.";
 
 /// The command line of a turn.
-pub(crate) fn argv(turn: &TurnSpec<'_>) -> Vec<String> {
+pub fn argv(turn: &TurnSpec<'_>) -> Vec<String> {
     let mut argv = strings(&[
         turn.program,
         "-p",
@@ -87,7 +87,7 @@ pub(crate) fn argv(turn: &TurnSpec<'_>) -> Vec<String> {
 }
 
 /// A session for one turn.
-pub(crate) fn session(unique: u64) -> Box<dyn AgentSession> {
+pub fn session(unique: u64) -> Box<dyn AgentSession> {
     Box::new(ClaudeSession {
         reader: Reader::new(),
         asked: BTreeMap::new(),
@@ -100,7 +100,7 @@ pub(crate) fn session(unique: u64) -> Box<dyn AgentSession> {
 }
 
 /// The opening request, as a line.
-pub(crate) fn hello(request_id: &str) -> String {
+pub fn hello(request_id: &str) -> String {
     json!({
         "type": "control_request",
         "request_id": request_id,
@@ -260,8 +260,8 @@ impl ClaudeSession {
         });
     }
 
-    fn answer(&mut self, id: &str, answer: Answer) -> Result<Value, MobileError> {
-        let asked = self.asked.get(id).ok_or(MobileError::UnknownQuestion)?;
+    fn answer(&mut self, id: &str, answer: Answer) -> Result<Value, TurnError> {
+        let asked = self.asked.get(id).ok_or(TurnError::UnknownQuestion)?;
         let allow = |input: Value| json!({ "behavior": "allow", "updatedInput": input });
         let deny = |message: Option<String>, fallback: &str| {
             let message = message
@@ -282,7 +282,7 @@ impl ClaudeSession {
                     .strip_prefix(CHOICE_ALWAYS)
                     .and_then(|at| at.parse::<usize>().ok())
                     .and_then(|at| asked.suggestions.get(at))
-                    .ok_or(MobileError::BadAnswer)?;
+                    .ok_or(TurnError::BadAnswer)?;
                 let mut response = allow(asked.input.clone());
                 response["updatedPermissions"] = json!([suggestion]);
                 Ok(response)
@@ -317,7 +317,7 @@ impl ClaudeSession {
             (_, Answer::Permission { choice_id, reason }) if choice_id == CHOICE_DENY => {
                 Ok(deny(reason, DENIED))
             }
-            _ => Err(MobileError::BadAnswer),
+            _ => Err(TurnError::BadAnswer),
         }
     }
 }
@@ -548,7 +548,7 @@ impl AgentSession for ClaudeSession {
         }
     }
 
-    fn encode(&mut self, action: Action) -> Result<Vec<Outgoing>, MobileError> {
+    fn encode(&mut self, action: Action) -> Result<Vec<Outgoing>, TurnError> {
         let outgoing = match action {
             Action::Prompt(text) => {
                 self.idle = false;
@@ -604,9 +604,9 @@ impl AgentSession for ClaudeSession {
 }
 
 /// A permission mode of the agent.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMode {
-    /// What [`crate::TurnRequest`] and [`crate::Turn::set_mode`] take.
+    /// What a turn is started with, and what changing it takes.
     pub id: String,
     /// Words for it.
     pub label: String,
@@ -617,9 +617,9 @@ pub struct AgentMode {
 }
 
 /// A model the agent can answer with.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModel {
-    /// What [`crate::TurnRequest`] and [`crate::Turn::set_model`] take.
+    /// What a turn is started with, and what changing it takes.
     pub id: String,
     /// Its name.
     pub label: String,
@@ -630,8 +630,39 @@ pub struct AgentModel {
     pub efforts: Vec<String>,
 }
 
+/// Something of the agent's own that a prompt can ask for by name: a
+/// command of its, a skill, a prompt somebody saved for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCommand {
+    /// Its name, without what a person types in front of it.
+    pub name: String,
+    /// What it does, when the agent says.
+    pub description: Option<String>,
+    /// What may follow it, when the agent says.
+    pub hint: Option<String>,
+    /// What a prompt starts with to ask for it: `/compact`, `$skill`.
+    pub insert: String,
+}
+
+impl AgentCommand {
+    /// A command asked for the way most agents take one: a slash, its name.
+    pub fn slash(name: &str, description: Option<&str>, hint: Option<&str>) -> Self {
+        let filled = |text: Option<&str>| {
+            text.map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            name: name.to_owned(),
+            description: filled(description),
+            hint: filled(hint),
+            insert: format!("/{name}"),
+        }
+    }
+}
+
 /// What an agent offers on the other computer, as installed there.
-#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AgentOptions {
     /// Its version, when it says.
     pub version: Option<String>,
@@ -642,10 +673,12 @@ pub struct AgentOptions {
     pub default_mode: Option<String>,
     /// Its models. A turn started with none uses that computer's default.
     pub models: Vec<AgentModel>,
-    /// It asks before acting and waits for [`crate::Turn::answer`].
+    /// What a prompt can ask it for by name, as it lists them.
+    pub commands: Vec<AgentCommand>,
+    /// It asks before acting and waits for an answer.
     pub questions: bool,
-    /// It can be told more while it works ([`crate::Turn::send`]) and
-    /// interrupted ([`crate::Turn::interrupt`]).
+    /// It can be told more while it works and
+    /// interrupted.
     pub follow_ups: bool,
     /// Its mode and model can be changed while a turn runs.
     pub live_changes: bool,
@@ -657,19 +690,19 @@ pub struct AgentOptions {
 /// The command that asks Claude Code what it offers: its version, the modes
 /// its help lists, and the answer to the opening request. `$1` is the
 /// program and `$2` the request.
-pub(crate) const OPTIONS_SCRIPT: &str = r#"printf 'leon-version:%s\n' "$("$1" --version 2>/dev/null | head -n 1)"
+pub const OPTIONS_SCRIPT: &str = r#"printf 'leon-version:%s\n' "$("$1" --version 2>/dev/null | head -n 1)"
 "$1" --help 2>/dev/null | tr -s ' \n' ' ' | sed -n 's/.*--permission-mode <mode>[^(]*(choices: \([^)]*\)).*/leon-modes:\1/p'
 echo
 printf '%s\n' "$2" | "$1" -p --input-format stream-json --output-format stream-json --verbose --no-session-persistence 2>/dev/null
 exit 0"#;
 
 /// What [`OPTIONS_SCRIPT`] is given after the program: the opening request.
-pub(crate) fn options_arguments() -> Vec<String> {
+pub fn options_arguments() -> Vec<String> {
     vec![hello("leon-options")]
 }
 
 /// Reads the output of [`OPTIONS_SCRIPT`].
-pub(crate) fn parse_options(text: &str) -> AgentOptions {
+pub fn parse_options(text: &str) -> AgentOptions {
     let mut options = AgentOptions {
         questions: true,
         follow_ups: true,
@@ -711,6 +744,17 @@ pub(crate) fn parse_options(text: &str) -> AgentOptions {
                             .map(text_of)
                             .collect(),
                     })
+                })
+                .collect();
+            options.commands = blocks(&answer["commands"])
+                .iter()
+                .filter_map(|command| {
+                    let name = command["name"].as_str().filter(|name| !name.is_empty())?;
+                    Some(AgentCommand::slash(
+                        name,
+                        command["description"].as_str(),
+                        command["argumentHint"].as_str(),
+                    ))
                 })
                 .collect();
         }
@@ -999,7 +1043,7 @@ mod tests {
                     reason: None
                 }
             )),
-            Err(MobileError::UnknownQuestion)
+            Err(TurnError::UnknownQuestion)
         );
     }
 
@@ -1104,7 +1148,7 @@ mod tests {
                     feedback: None
                 }
             )),
-            Err(MobileError::BadAnswer)
+            Err(TurnError::BadAnswer)
         );
         assert!(session
             .encode(Action::Answer(
@@ -1307,6 +1351,33 @@ mod tests {
         );
         assert!(matches!(events[1], TurnEvent::Finished { ok: false, .. }));
         assert_eq!(events[2], TurnEvent::Exited { code: 1 });
+    }
+
+    #[test]
+    fn the_commands_of_its_greeting_are_asked_for_with_a_slash() {
+        let text = "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"o\",\"response\":{\"commands\":[{\"name\":\"compact\",\"description\":\"Clear the history but keep a summary\",\"argumentHint\":\"<optional instructions>\"},{\"name\":\"stripe:test-cards\",\"description\":\"\",\"argumentHint\":\"\"},{\"name\":\"\"}],\"models\":[]}}}\n";
+        let options = parse_options(text);
+        assert_eq!(
+            options.commands,
+            [
+                AgentCommand {
+                    name: "compact".into(),
+                    description: Some("Clear the history but keep a summary".into()),
+                    hint: Some("<optional instructions>".into()),
+                    insert: "/compact".into(),
+                },
+                AgentCommand {
+                    name: "stripe:test-cards".into(),
+                    description: None,
+                    hint: None,
+                    insert: "/stripe:test-cards".into(),
+                },
+            ]
+        );
+        // An agent that could not be asked lists none.
+        assert!(parse_options("command not found: claude\n")
+            .commands
+            .is_empty());
     }
 
     #[test]

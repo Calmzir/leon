@@ -13,20 +13,20 @@
 //! and only a terminal streams and outlives a dropped connection, so a turn
 //! is the agent run inside a host terminal:
 //!
-//! * [`agents`] is the catalogue: each agent is driven as a session (spoken
-//!   to both ways while it works), started through the owner's login shell;
+//! * `leon-turn`, Leon's unified agent protocol, is the catalogue of agents
+//!   and each one's own way of being spoken to (Claude Code's control
+//!   protocol, Codex's application server, opencode over the Agent Client
+//!   Protocol), reduced to the few events a chat shows. The desktop
+//!   application drives agents with the same crate;
+//! * [`agents`] starts an agent's command through the owner's login shell;
 //! * `bridge` makes a terminal a two-way line to an agent's standard
 //!   streams, with acknowledgements that survive in the output the host
 //!   keeps;
 //! * `turn` is the engine of one turn: what to tell the chat and what to
 //!   write, with nothing written early, lost while offline or sent twice
 //!   after a replay;
-//! * [`claude`] is Claude Code's control protocol, and what it offers;
-//! * [`codex`] is Codex's application server, and what it offers;
-//! * [`opencode`] is opencode over the Agent Client Protocol, and what it
-//!   offers;
-//! * [`events`] reads the lines an agent prints (one JSON value each) and
-//!   reduces them to the few [`TurnEvent`]s a chat shows;
+//! * [`events`] and [`options`] are that protocol's types as they cross to
+//!   the application;
 //! * [`session`] is the connection: shared state, transcripts, turns that
 //!   can be found again and re-attached after the app was closed;
 //! * [`logo`] finds a project's logo on the other computer with the
@@ -40,19 +40,16 @@
 
 pub mod agents;
 mod bridge;
-pub mod claude;
-pub mod codex;
 pub mod error;
 pub mod events;
 pub mod logo;
 pub mod mobile;
-pub mod opencode;
+pub mod options;
 mod runtime;
 pub mod session;
 mod turn;
 
 pub use agents::{agents, AgentInfo};
-pub use claude::{AgentMode, AgentModel, AgentOptions};
 pub use error::MobileError;
 pub use events::{
     Answer, ChoiceAnswer, ChoiceOption, ChoiceQuestion, PermissionChoice, PermissionEffect,
@@ -60,6 +57,7 @@ pub use events::{
 };
 pub use logo::{LogoFormat, LogoImage, ProjectLogo};
 pub use mobile::{check_code, CodeCheck, LeonMobile, PairedHost};
+pub use options::{AgentMode, AgentModel, AgentOptions};
 pub use session::{
     ConnectionListener, ConnectionState, HistorySession, HostSession, OfflineReason, Project,
     RunningTurn, SharedState, SpawnOverrides, TranscriptEntry, Turn, TurnListener, TurnRequest,

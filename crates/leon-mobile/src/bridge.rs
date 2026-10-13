@@ -1,106 +1,14 @@
-//! Both directions of a turn's terminal: how the phone writes to an agent
-//! that reads its standard input, and how it knows what arrived.
+//! The bridge of a turn's terminal, as the phone asks the host to start it.
 //!
-//! A turn runs in a terminal of the host because only a terminal streams and
-//! outlives a dropped connection. A terminal is a poor pipe, though: it
-//! echoes what is typed, hands a program its input one line at a time and
-//! cuts a line at 4096 bytes, treats some bytes as keys, and cannot say "end
-//! of input" without closing. And the host keeps a terminal's *output* only:
-//! after the application was closed, nothing says what had been typed.
-//!
-//! So the agent does not read the terminal. [`BRIDGE`], a small POSIX shell
-//! script, stands between them:
-//!
-//! ```text
-//! phone ── terminal input ──► bridge ── pipe ──► agent's standard input
-//! phone ◄── terminal output ◄──────────────────── agent's output
-//!                             bridge's marks ──┘
-//! ```
-//!
-//! * The bridge switches echo off, then says it is ready ([`Mark::Ready`]).
-//!   Nothing is written before that mark: no input is echoed or lost to a
-//!   shell that is still starting.
-//! * A message for the agent (one line of JSON) travels as a **frame**: short
-//!   terminal lines carrying pieces of it ([`frame`]). The bridge puts the
-//!   pieces together and gives the agent the whole line at once, whatever its
-//!   length, or nothing.
-//! * Every frame has a number that only grows and a tag. The bridge passes a
-//!   number on once (a frame sent twice arrives once) and answers each frame
-//!   on the terminal's output with [`Mark::Ack`], number and tag. The mark is
-//!   therefore in the output the host keeps: replaying a turn shows what the
-//!   agent was told, which is how a question is known to be answered.
-//! * [`end`] closes the agent's input, which is how an agent that waits for
-//!   more is told there is no more.
-//! * What the agent must read first (its handshake, the first prompt) can be
-//!   given to the bridge as arguments: it is then delivered whether or not
-//!   the phone stays connected after starting the turn.
-//!
-//! Marks are written between two record separators (0x1E), a byte no JSON
-//! line holds unescaped, without a line end of their own: [`Marks`] takes
-//! them out of the output wherever they fall, even inside a line the agent
-//! was printing.
+//! The bridge itself (its script, the frames written to it and the marks it
+//! answers with) is `leon_turn::bridge`, shared with the desktop
+//! application. Here is only what the host is asked to run.
 
 use leon_wire::ExecSpec;
 
+pub(crate) use leon_turn::bridge::{end, frame, safe_tag, Mark, Marks, ARGUMENT_BYTES, END_TAG};
+
 use crate::agents::login_spec;
-
-/// The byte around a mark.
-const FENCE: u8 = 0x1E;
-/// A mark is short; a fence followed by more than this is not one.
-const MARK_MAX: usize = 200;
-/// The most bytes of a message on one terminal line. With the header it
-/// stays far below the 4096 bytes a terminal hands over at once.
-const PIECE_BYTES: usize = 1000;
-/// The most bytes of first messages given to the bridge as arguments; more
-/// is sent as frames once it is ready. (One argument may be 128 KiB on
-/// Linux, and a wire string 64 KiB.)
-pub(crate) const ARGUMENT_BYTES: usize = 48 * 1024;
-
-/// The script between the terminal and the agent. Arguments: how many first
-/// lines follow, those lines, then the agent's command.
-pub(crate) const BRIDGE: &str = r#"n=$1; shift
-init=
-while [ "$n" -gt 0 ]; do
-    init="$init$1
-"
-    shift; n=$((n - 1))
-done
-exec 3>&1 4<&0
-stty -echo 2>/dev/null
-umask 077
-pipe="${TMPDIR:-/tmp}/leon-turn.$$"
-rm -f "$pipe"
-mkfifo "$pipe" || exit 70
-trap 'rm -f "$pipe"' EXIT
-trap 'exit 129' HUP
-trap 'exit 143' TERM
-(
-    printf '%s' "$init"
-    printf '\036leon-ready\036' >&3
-    last=0; cur=; buf=; count=0
-    while IFS= read -r line <&4; do
-        kind=${line%% *}; rest=${line#* }
-        seq=${rest%% *}
-        case "$seq" in ''|*[!0-9]*) continue ;; esac
-        case "$kind" in
-        B) cur=$seq; buf=; count=0 ;;
-        +) if [ "$seq" = "$cur" ]; then buf="$buf${rest#* }"; count=$((count + 1)); fi ;;
-        E) rest=${rest#* }; want=${rest%% *}; tag=${rest#* }
-           if [ "$seq" = "$cur" ] && [ "$count" = "$want" ]; then
-               if [ "$seq" -gt "$last" ]; then printf '%s\n' "$buf"; last=$seq; fi
-               printf '\036leon-ack:%s:%s\036' "$seq" "$tag" >&3
-           else
-               printf '\036leon-nak:%s\036' "$seq" >&3
-           fi
-           cur=; buf=; count=0 ;;
-        X) printf '\036leon-ack:%s:end\036' "$seq" >&3; exit 0 ;;
-        esac
-    done
-) > "$pipe" &
-"$@" < "$pipe" 3>&- 4<&-
-code=$?
-kill $! 2>/dev/null
-exit $code"#;
 
 /// What the host is asked to start: the bridge, given `first` to hand to the
 /// agent before anything else, then the agent's `argv` (program first).
@@ -110,282 +18,18 @@ pub(crate) fn bridge_spec(
     cwd: Option<String>,
     login_shell: bool,
 ) -> ExecSpec {
-    let mut command = vec![
-        "sh".to_owned(),
-        "-c".to_owned(),
-        BRIDGE.to_owned(),
-        "leon-bridge".to_owned(),
-        first.len().to_string(),
-    ];
-    command.extend(first.iter().map(|line| typeable(line)));
-    command.extend(argv);
-    login_spec(command, cwd, login_shell)
-}
-
-/// A line of JSON with nothing in it a terminal acts on: JSON already
-/// escapes every control character below 0x20; DEL (the erase key) is the
-/// one left, and inside a JSON string it may be written escaped.
-fn typeable(line: &str) -> String {
-    line.replace('\u{7f}', "\\u007f")
-}
-
-/// The terminal lines that carry `line` (one JSON value) to the agent as
-/// frame number `seq`, answered by an ack carrying `tag`.
-pub(crate) fn frame(seq: u64, tag: &str, line: &str) -> Vec<u8> {
-    let line = typeable(line);
-    let mut out = format!("B {seq}\n").into_bytes();
-    let mut count = 0usize;
-    let mut rest = line.as_str();
-    while !rest.is_empty() {
-        let mut cut = rest.len().min(PIECE_BYTES);
-        while !rest.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        let (piece, tail) = rest.split_at(cut);
-        out.extend_from_slice(format!("+ {seq} ").as_bytes());
-        out.extend_from_slice(piece.as_bytes());
-        out.push(b'\n');
-        count += 1;
-        rest = tail;
-    }
-    out.extend_from_slice(format!("E {seq} {count} {}\n", safe_tag(tag)).as_bytes());
-    out
-}
-
-/// The terminal line that closes the agent's input, as frame number `seq`.
-/// Its ack carries the tag [`END_TAG`].
-pub(crate) fn end(seq: u64) -> Vec<u8> {
-    format!("X {seq}\n").into_bytes()
-}
-
-/// The tag of the ack that answers [`end`].
-pub(crate) const END_TAG: &str = "end";
-
-/// A tag as it may be written on a terminal line: letters, digits, `.`, `-`
-/// and `_`; anything else becomes `_`.
-pub(crate) fn safe_tag(tag: &str) -> String {
-    tag.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-/// A tag made of `kind` and an id of the agent's, reversible whatever the id
-/// holds: an id that is not plain is written in hexadecimal after `x`.
-pub(crate) fn id_tag(kind: char, id: &str) -> String {
-    let plain = !id.is_empty()
-        && !id.starts_with('x')
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    if plain {
-        return format!("{kind}.{id}");
-    }
-    let hex: String = id.bytes().map(|byte| format!("{byte:02x}")).collect();
-    format!("{kind}.x{hex}")
-}
-
-/// The id inside a tag written by [`id_tag`] for `kind`.
-pub(crate) fn tag_id(kind: char, tag: &str) -> Option<String> {
-    let rest = tag.strip_prefix(kind)?.strip_prefix('.')?;
-    let Some(hex) = rest.strip_prefix('x') else {
-        return Some(rest.to_owned());
-    };
-    if hex.len() % 2 != 0 {
-        return None;
-    }
-    let bytes: Option<Vec<u8>> = (0..hex.len() / 2)
-        .map(|at| u8::from_str_radix(hex.get(at * 2..at * 2 + 2)?, 16).ok())
-        .collect();
-    String::from_utf8(bytes?).ok()
-}
-
-/// What the bridge says on the terminal's output.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Mark {
-    /// Echo is off and the agent has its input: frames may be written.
-    Ready,
-    /// Frame `seq` arrived whole and the agent has it (or had it already).
-    Ack {
-        /// The frame's number.
-        seq: u64,
-        /// The frame's tag.
-        tag: String,
-    },
-    /// Frame `seq` arrived damaged and was dropped: send it again.
-    Nak {
-        /// The frame's number.
-        seq: u64,
-    },
-}
-
-fn parse_mark(text: &[u8]) -> Option<Mark> {
-    let text = std::str::from_utf8(text).ok()?;
-    if text == "leon-ready" {
-        return Some(Mark::Ready);
-    }
-    if let Some(rest) = text.strip_prefix("leon-ack:") {
-        let (seq, tag) = rest.split_once(':')?;
-        return Some(Mark::Ack {
-            seq: seq.parse().ok()?,
-            tag: tag.to_owned(),
-        });
-    }
-    let seq = text.strip_prefix("leon-nak:")?;
-    Some(Mark::Nak {
-        seq: seq.parse().ok()?,
-    })
-}
-
-/// Takes the bridge's marks out of a terminal's output.
-#[derive(Debug, Default)]
-pub(crate) struct Marks {
-    /// The bytes after an opening fence, while the closing one is awaited.
-    open: Option<Vec<u8>>,
-}
-
-impl Marks {
-    /// Splits `bytes` into what the agent printed (appended to `output`) and
-    /// the marks among it (appended to `marks`), in order.
-    pub(crate) fn push(&mut self, bytes: &[u8], output: &mut Vec<u8>, marks: &mut Vec<Mark>) {
-        for &byte in bytes {
-            match (&mut self.open, byte) {
-                (None, FENCE) => self.open = Some(Vec::new()),
-                (None, _) => output.push(byte),
-                (Some(inside), FENCE) => {
-                    match parse_mark(inside) {
-                        Some(mark) => {
-                            marks.push(mark);
-                            self.open = None;
-                        }
-                        // Not a mark: what was held is output, and this
-                        // fence may open a real one.
-                        None => {
-                            output.extend_from_slice(inside);
-                            inside.clear();
-                        }
-                    }
-                }
-                (Some(inside), _) => {
-                    inside.push(byte);
-                    if inside.len() > MARK_MAX || byte == b'\n' {
-                        output.extend_from_slice(inside);
-                        self.open = None;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Output was lost: a mark cut in two is forgotten.
-    pub(crate) fn reset(&mut self) {
-        self.open = None;
-    }
+    login_spec(leon_turn::bridge::argv(first, argv), cwd, login_shell)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn split(chunks: &[&[u8]]) -> (String, Vec<Mark>) {
-        let (mut reader, mut output, mut marks) = (Marks::default(), Vec::new(), Vec::new());
-        for chunk in chunks {
-            reader.push(chunk, &mut output, &mut marks);
-        }
-        (String::from_utf8(output).unwrap(), marks)
-    }
+    use leon_turn::bridge::BRIDGE;
 
     #[test]
-    fn a_short_message_is_one_piece_between_a_beginning_and_an_end() {
-        let bytes = frame(7, "a.q-1", r#"{"a":1}"#);
-        assert_eq!(
-            String::from_utf8(bytes).unwrap(),
-            "B 7\n+ 7 {\"a\":1}\nE 7 1 a.q-1\n"
-        );
-    }
-
-    #[test]
-    fn a_long_message_is_cut_into_lines_a_terminal_hands_over_whole() {
-        let text = format!(r#"{{"text":"{}é"}}"#, "ñ".repeat(4000));
-        let bytes = frame(1, "p", &text);
-        let lines: Vec<&str> = std::str::from_utf8(&bytes).unwrap().lines().collect();
-        assert!(lines.len() > 9, "{} lines", lines.len());
-        assert!(lines.iter().all(|line| line.len() < 1100));
-        // Put back together, it is the message: no character was cut in two.
-        let pieces: String = lines
-            .iter()
-            .filter_map(|line| line.strip_prefix("+ 1 "))
-            .collect();
-        assert_eq!(pieces, text);
-        let count = lines.len() - 2;
-        assert_eq!(lines[lines.len() - 1], format!("E 1 {count} p"));
-    }
-
-    #[test]
-    fn the_erase_key_is_never_typed() {
-        let bytes = frame(1, "p", "{\"text\":\"a\u{7f}b\"}");
-        assert!(!bytes.contains(&0x7f));
-        assert!(String::from_utf8(bytes).unwrap().contains("a\\u007fb"));
-        let spec = bridge_spec(&["{\"t\":\"\u{7f}\"}".to_owned()], vec![], None, false);
-        assert!(spec.args.iter().all(|arg| !arg.contains('\u{7f}')));
-    }
-
-    #[test]
-    fn a_tag_holds_nothing_a_terminal_line_could_not() {
-        assert_eq!(safe_tag("a.b c\n;$(x)"), "a.b_c____x_");
-        assert_eq!(id_tag('a', "0f3c-11"), "a.0f3c-11");
-        assert_eq!(tag_id('a', "a.0f3c-11").as_deref(), Some("0f3c-11"));
-        for id in ["", "x1", "has space", "né", "7", "a.b"] {
-            let tag = id_tag('q', id);
-            assert_eq!(tag, safe_tag(&tag), "{id:?}");
-            assert_eq!(tag_id('q', &tag).as_deref(), Some(id), "{id:?}");
-            assert_eq!(tag_id('a', &tag), None);
-        }
-    }
-
-    #[test]
-    fn marks_are_taken_out_wherever_they_fall() {
-        let (output, marks) = split(&[
-            b"noise\n\x1eleon-ready\x1e{\"a\":",
-            b"\x1eleon-ack:12:a.q1\x1e1}\n\x1eleon-",
-            b"nak:13\x1e",
-        ]);
-        assert_eq!(output, "noise\n{\"a\":1}\n");
-        assert_eq!(
-            marks,
-            [
-                Mark::Ready,
-                Mark::Ack {
-                    seq: 12,
-                    tag: "a.q1".into()
-                },
-                Mark::Nak { seq: 13 },
-            ]
-        );
-    }
-
-    #[test]
-    fn a_fence_that_opens_no_mark_loses_nothing_but_itself() {
-        let (output, marks) = split(&[b"a\x1enot a mark\x1eleon-ready\x1eb\x1eline\nend"]);
-        assert_eq!(output, "anot a markbline\nend");
-        assert_eq!(marks, [Mark::Ready]);
-        let long = vec![b'z'; MARK_MAX + 50];
-        let mut bytes = vec![FENCE];
-        bytes.extend_from_slice(&long);
-        let (output, marks) = split(&[&bytes]);
-        assert_eq!(output.len(), long.len());
-        assert!(marks.is_empty());
-    }
-
-    #[test]
-    fn the_bridge_is_started_with_its_first_lines_before_the_agent() {
+    fn the_bridge_is_started_in_the_folder_of_the_turn() {
         let spec = bridge_spec(
-            &["{\"one\":1}".to_owned(), "{\"two\":2}".to_owned()],
+            &["{\"one\":1}".to_owned()],
             vec!["claude".to_owned(), "-p".to_owned()],
             Some("/work".into()),
             false,
@@ -397,9 +41,8 @@ mod tests {
                 "-c",
                 BRIDGE,
                 "leon-bridge",
-                "2",
+                "1",
                 "{\"one\":1}",
-                "{\"two\":2}",
                 "claude",
                 "-p"
             ]

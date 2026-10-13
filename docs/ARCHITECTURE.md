@@ -15,13 +15,17 @@ app (leon)  ── ui, engine, keys, theme, launch, memory, diagnose
 │   ├── leon-usage    the agents' usage limits, per machine
  │   ├── leon-memory   the memory agents share: file, block, MCP (pure)
  │   ├── leon-update   updates from the GitHub releases (no window)
+ │   ├── leon-turn     the unified agent protocol: every agent as the same turn (pure)
+ │   ├── leon-voice    dictation: speech models, the microphone, sound into text
  │   └── leon-core     the model and the SQLite store
 leon-remote ── leon-core
 leon-history ── leon-core
 leon-usage ── leon-core, leon-remote
 leon-memory ── leon-core
 leon-update ── leon-remote (only for `spawn`)
-leon-mobile ── leon-link, leon-wire (the phone's library; not part of the app)
+leon-mobile ── leon-link, leon-wire, leon-turn (the phone's library; not part of the app)
+leon-turn ── serde_json only (no other Leon crate)
+leon-voice ── leon-update (its downloads); cpal and whisper.cpp behind `engine`
 leon-term ── gpui-kit only (no other Leon crate)
 leon-mark ── gpui-kit only (no other Leon crate)
 leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3d`
@@ -37,7 +41,9 @@ leon-den ── gpui-kit and image only (no other Leon crate); wgpu behind `den3
 | `leon-update` | Updates from the GitHub releases of this repository. `version` (which tags count, which is newer), `release` (the API's answer, the platform's file), `http` (an `Http` trait and the system `curl` behind it, with the host allow-list), `download` (redirects by hand, resumable, bounded), `checksums` (`SHA256SUMS`, constant-time), `package` (the program out of the dmg, tarball or zip, strictly), `trust` (the signature rules), `install` (where Leon is installed and the swap with its way back), `launch` (the hand-over, the watch, the confirmation, the rollback), `updater` (the state machine published over a watch channel) and `state` (what is kept). No UI; every system tool (`hdiutil`, `ditto`, `codesign`, PowerShell) is behind a `Tools` trait. |
 | `leon-wire` | The wire protocol: versioned length-prefixed frames, the application messages (run a command, terminals, re-attach) and the relay rendezvous messages. Pure (`postcard` over `serde`); every decoder is bounded and fuzz-style tested. |
 | `leon-link` | Everything that keeps a remote session private: identity, the short pairing code (SPAKE2 then Noise `XXpsk3`), the Noise `IK` session with fragmentation and rekeying, the device registry, the relay WebSocket adapter, the durable `Client` (reconnection, exact terminal re-attach) and, behind `test-support`, an in-process test relay. |
-| `leon-mobile` | Leon for phones, exported with UniFFI (the React Native package in `mobile/modules/leon-link-native` is generated from it). The application itself is `mobile/` (Expo, TypeScript; see `mobile/README.md`): it reaches this crate only through `mobile/src/link`, and is outside the Cargo workspace. `mobile` (identity, pairing, connecting), `session` (shared state, transcripts, turns), `agents` (the command line of one headless turn of each agent, started through the owner's login shell) and `events` (the agent's JSON lines reduced to the events a chat shows). A turn runs in a host terminal, so it streams, survives a dropped connection and can be re-attached; the host needs nothing new. |
+| `leon-turn` | Leon's unified agent protocol: one conversation with a coding agent, the same whatever the agent is. `agents` (the catalogue: an `Adapter` per agent, and the `AgentSession` it makes, which says what to write and reads what is printed), `claude` (Claude Code's control protocol), `codex` (Codex's application server), `acp` (the Agent Client Protocol: one session for every agent that serves it, with a `Dialect` for where they differ) and `opencode`, `grok`, `cursor` (each one's command, dialect and what it offers), `events` (`TurnEvent`, the questions and their answers, and `Lines`, bytes to clean lines), `shell` (the login shell a command is started through) and `tag` (the names messages are acknowledged by). Pure: lines in, events and lines out; it starts no process and knows no transport. See "Conversations in Leon's own interface". |
+| `leon-voice` | Dictation: `catalog` (the speech models, which serve a language, where each comes from and its checksum), `store` (the models on this computer: installed, download, remove), `audio` (channels, rate, loudness; pure), and behind the feature `engine` `capture` (the microphone, through cpal) and `engine::Whisper` (whisper.cpp). The application sees `engine::Engine` only. See "Conversations in Leon's own interface". |
+| `leon-mobile` | Leon for phones, exported with UniFFI (the React Native package in `mobile/modules/leon-link-native` is generated from it). The application itself is `mobile/` (Expo, TypeScript; see `mobile/README.md`): it reaches this crate only through `mobile/src/link`, and is outside the Cargo workspace. `mobile` (identity, pairing, connecting), `session` (shared state, transcripts, turns), `bridge` and `turn` (a host terminal as a two-way line to an agent, with acknowledgements that survive a replay), `agents` (the command of a turn in the owner's login shell) and `events` and `options` (the types of `leon-turn` as they cross to the application, declared again field for field so the exported interface does not move). The agents themselves are driven by `leon-turn`. A turn runs in a host terminal, so it streams, survives a dropped connection and can be re-attached; the host needs nothing new. |
 | `leon-pty` | The GPUI-free part of terminals: `SpawnSpec`, grid maths and `PtyProcess` (a child in a pseudo-terminal driven by channels). `leon-term` re-exports it. |
 | `leon-host` | The sharing service: executes commands, owns durable terminals with a replay ring, serves pairing and sessions through a relay, reconnects, cuts off revoked devices; the `leon host` command line. Also the keeper of durable local sessions (`keeper`): the same terminal table behind a Unix socket instead of a relay (see "Durable local sessions"). |
 | `leon-term` | A terminal for GPUI: `Terminal` (PTY, emulator, child) and `TerminalView` (the GPUI entity). Depends on `gpui-kit` and nothing of Leon; the application maps its own command type onto `SpawnSpec`. |
@@ -126,6 +132,8 @@ module. See `docs/REMOTE.md` for the security model.
    The UI asks for work (`Engine::submit`) and never receives data from it.
    Live terminals are the one thing the UI owns directly: they are processes
    attached to the window, not data, and they live in `ui::live::Sessions`.
+   So are conversations (`Shell.chats`), each of which owns the process of
+   its turn in flight.
 3. **Tokens only in `theme/`.** Every colour, size, radius and font the UI
    uses is data of a theme, defined there once per theme (see "Themes");
    so are the terminal's 16 ANSI colours (`Palette::terminal`). `leon-term` has no colour literal except the xterm
@@ -1437,6 +1445,184 @@ this computer, and no fallback to one when the platform has no dialog (that
 is an error status). Typing a path remains for SSH machines.
 `leon --diagnose folder-dialog` calls the same function and prints that the
 prompt was reached.
+
+## Conversations in Leon's own interface (`leon-turn`, `chat/`, `ui/chat*.rs`)
+
+In beta, behind the setting `agent_interface` (`terminal` by default, `chat`
+for Leon's own): a session of an agent is a conversation drawn by Leon, the
+same for every agent, instead of the agent's own program in a terminal.
+
+```text
+person ── field ──► Shell::chat_say ──► Turn ── pipe ──► agent's process
+                                         │  AgentSession (leon-turn): the
+                                         │  agent's own protocol, both ways
+window ◄── Conversation ◄── TurnEvent ◄──┘
+```
+
+**One protocol.** `leon-turn` is the only place that knows how Claude Code,
+Codex and opencode are driven by a program. What comes out of it is the same
+for all three: a turn is a prompt and a short list of `TurnEvent`s (started,
+text, thought, a tool's use and its result, a question, finished, exited), a
+question is a permission, a choice or a plan, and what a person can do is an
+`Action` (say more, answer, interrupt, change the mode or the model). The
+phone's library drives agents with the same crate, so a conversation reads the
+same on both. Adding an agent is one `Adapter`.
+
+**One turn, one process.** `chat::turn::Turn` holds the adapter's
+`AgentSession` and a `Transport` to the process. Each prompt starts the agent
+through the login shell (`leon_turn::shell`, so `PATH` is a terminal's) with
+its three streams piped; the prompt is never an argument, it is written to the
+agent's input. On a pipe a line written is a line delivered, so every message
+is acknowledged to the session at once. An agent that has nothing more to do
+has its input closed, which ends it; the next prompt is a new process that
+resumes the agent's own conversation by the id it gave it (`TurnSpec::resume`),
+so the agent's history holds one session and the importer finds it as ever.
+What is written while a turn runs goes to the agent where it takes more
+(Claude Code queues it, Codex steers with it) and waits to be the next turn
+where it does not (opencode). `Spawner` starts the process, and the tests put a
+scripted one in its place.
+
+**On the machine of the session.** A `Start` names its machine, and
+`chat::reach::Reach`, the application's `Spawner`, starts the process there;
+the conversation above it is the same. On this computer it is `Piped`, a child
+on a pipe. Over SSH it is the same child, which is `ssh` running the command in
+the login shell of the other machine (`leon_remote::run_on`, so no terminal is
+asked for and the shared connection is used): `ssh` hands its input and output
+to the agent, and a connection that drops ends the turn, which the next prompt
+continues. Through a relay there are no pipes, only terminals, so the turn runs
+in a terminal of the paired computer behind the bridge the phone uses
+(`leon_turn::bridge`: a script that takes messages as numbered frames, passes
+each on once and acknowledges it in the terminal's output). `reach::Link` is the
+pure half: nothing is written before the bridge reads, one message is on its
+way at a time, one nobody acknowledged is written again, and a dropped
+connection holds everything until the client has re-attached. Ending a turn
+hangs its terminal up. What the agent is told through its environment on
+another machine is only the account's, with that machine's home folder; the
+files `@` lists and what the agent offers are asked of that machine.
+
+**One conversation.** `chat::model::Conversation::apply` reduces the events to
+a list of items (the person's words, the agent's Markdown, thoughts, tools with
+their results, notices) and the open questions; `blocks` lays the list out,
+folding the work between two messages into one line. Both are pure and tested.
+
+**A leaf like the others.** A conversation is a leaf of a tab, in the side
+table `Shell.chats: HashMap<LiveId, Chat>`, as a file is in `Shell.files` and
+the changes of a worktree in `Shell.changes` (see "Files in tabs"). Unlike
+those it is a session: `Shell::live_entries` gives the tree a row for it, with
+its label (the first thing the person said), its state and the light of what
+its agent is doing (`Chat::activity`: working, needs you, turn over, failed).
+`Shell::start_live` is where the two interfaces part: `wants_chat` says yes
+for `Launch::Agent` when the setting asks for it, the protocol knows the agent
+and the machine is this computer, and `start_chat` then does what
+`spawn_live` and `place_live` do for a terminal. Opening a history session
+resumes it as a conversation the same way, with what was said before read from
+the store above what is said next.
+
+**What is drawn** (`ui/chat_view.rs`) is the brand's: the page's own
+background and hairlines rather than bubbles, mono capitals for labels, the
+accent kept for the one thing to do next. The person's words sit in a cell on
+the right; the agent's are Markdown on the page; the work between them is one
+folded line, open while it happens; a question is a framed cell above the
+field with the change as lines that go and come, and its accented answer is
+also `Enter` in an empty field. `Escape` stops the turn. The chips under the
+field are the agent's own permission modes, its models and the efforts of
+the model in use, as the agent on this computer lists them (`Adapter::options`, asked once per conversation).
+
+**What is named rather than written** is one list above the field, the same
+for every agent (`chat/complete.rs` says which rows, `ui/chat_menu.rs` keeps
+the list and draws it):
+
+* a slash that opens the prompt lists the **commands**: Leon's own `/model`,
+  `/effort`, `/mode` and `/voice`, then the agent's (`AgentOptions::commands`). Each adapter says
+  where its list comes from: Claude Code's greeting, Codex's `skills/list`
+  (a skill is asked for as `$name`) with the two things its server does
+  itself (`/compact` is `thread/compact/start`, `/review` is `review/start`),
+  and opencode's `available_commands_update`, which it only says inside a
+  session (`Step::commands`), so before the first turn its list is the three
+  commands every opencode has. An agent's command called like one of Leon's
+  is left out. Choosing a command writes it; one typed in full is sent;
+* an `@` that opens a word lists the **files** of the folder the agent works
+  in (`Engine::project_files`, asked again each time the list opens) and
+  writes `@path`, which every agent reads as a file to look at;
+* a chip, `/mode` or `/model` lists the agent's **modes** or **models** with
+  a field of its own to narrow them. A change reaches a turn in flight where
+  the agent takes it (`AgentOptions::live_changes`), the next turn otherwise;
+* a chip or `/effort` lists the **efforts**: how hard the model in use can be
+  told to think (`AgentModel::efforts`), the lightest first, after the
+  agent's own setting. The model in use is the one asked for, else the one
+  the agent says is answering, else the first it lists
+  (`complete::model_in_use`); a model without the setting has no chip, and
+  choosing one drops an effort it lacks. No agent takes an effort while it
+  works, so it is always the next turn's (`TurnSpec::effort`).
+
+**What is said rather than typed** is dictation (`crates/leon-voice`,
+`voice.rs`, `ui/chat_voice.rs`). Nothing of it is on until the person asks:
+no model comes with Leon and the microphone is opened only by the field's
+**Dictate** button or `Command::Dictate`.
+
+* `leon-voice` is the part without a window. `catalog` is the speech models
+  there are (whisper.cpp's, on Hugging Face), which of them serves a
+  language (English has models of its own; every other language shares the
+  ones that know many) and, for each, the revision and the SHA-256 it is
+  pinned to. `store` is the models on this computer: a download goes through
+  `leon-update`'s client under `HostPolicy::Models` (that one repository and
+  the hosts it redirects to), is resumed where it stopped, and gets its name
+  only once its checksum is the pinned one, so what `installed` lists can be
+  used. `audio` is the arithmetic (channels into one, any rate into 16 kHz,
+  loudness). `capture` (cpal) and `engine::Whisper` (whisper.cpp through
+  `whisper-rs`) are behind the feature `engine`, which the app turns on for
+  Unix only: they need cmake, a C++ compiler and libclang to build.
+  `.cargo/config.toml` sets `GGML_NATIVE=OFF` so a build does not take the
+  instructions of the processor that built it;
+* `engine::Engine` is all that makes text of sound, and `voice::Voice` is all
+  the interface sees (models installed, download, microphone, transcribe).
+  `voice::Local` is the real one: the models of `<data folder>/voice`, the
+  system's microphone, a model loaded on first use and kept. A recogniser a
+  system already has (macOS, Windows) is meant to be a second `Voice` behind
+  the same trait; none is written yet. Tests use `voice::testing::Scripted`;
+* `ui/chat_voice.rs` keeps one dictation for the window (`Dictating`: idle,
+  downloading, listening, writing), because there is one microphone. With no
+  model that serves the language (`dictation_language`: the system's, one
+  named, or whichever is heard) the button opens the list of the models
+  offered (`MenuKind::Voices`, also `/voice`), and choosing one downloads it
+  and makes it `dictation_model`. With one, it opens the microphone; `Enter`
+  or the button closes it, the sound is made into text off the interface
+  thread and `complete::dictated` writes it where the cursor is, never
+  sending it; `Escape` drops it. What fails is said next to the button.
+
+While a list is open, `chat_key` gives it the arrows, `Ctrl+N`/`Ctrl+P`,
+`Enter`, `Tab` and `Escape` before the field sees them, so the keyboard stays
+where the person types. `leon-mobile` gets the same adapters and drops the
+commands at its boundary, which keeps its generated bindings as they were.
+
+**Which agents.** Claude Code, Codex, and the three that serve the Agent
+Client Protocol: opencode, Grok (`grok agent stdio`) and Cursor
+(`cursor-agent acp`). The last three share `leon_turn::acp`; a `Dialect` says
+what the effort's option is called, whether modes are an option of the session
+(opencode's agents) or the agent has none to set (then the two offered are the
+library's: asking, and allowing at once whatever is asked), whether a
+conversation is continued with `session/resume` or `session/load` (whose
+printing of the conversation again is passed over), and whether the agent must
+be told `authenticate` before a session (Cursor). Grok is tested against what
+grok 1.0.52 printed in real runs. Cursor was checked only up to its opening
+answer, the computer at hand not being signed in to it: the rest is the
+protocol as specified, and it offers no model. The agents of the catalogue
+that have no way to answer a permission over a protocol (Antigravity, ZCode)
+and Kimi, which serves the protocol and was not at hand, start in a terminal.
+The history importers know none of Grok and Cursor: their conversations are
+continued while they are open and are not found again after.
+
+**Not built yet**: taking up again a turn that still runs on a paired computer
+after the application was closed (the phone does; here closing ends it), a turn
+over SSH that outlives its connection, images attached to a prompt, dictation with the recogniser a
+system already has (macOS, Windows) and text that appears while the person
+still speaks (it is written when the microphone closes),
+Codex's and opencode's commands that are not in their protocol (the ones their
+terminal programs draw themselves), the banner and the desktop
+notification of a conversation that needs the person (the lights in the tree
+say it), restoring open conversations at the next start (the session is in the
+history and resumes from there), asking before a quit ends a turn in flight,
+the agent's own extra arguments from the settings, and Windows.
 
 ## The home (`ui/home.rs`)
 

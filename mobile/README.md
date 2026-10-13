@@ -133,7 +133,7 @@ no, with a reason), a question with options, a plan to approve. An answer
 given while offline is kept and sent when the connection is back. A mode that
 lets the agent do anything asks you to confirm.
 
-Claude Code, Codex and opencode are driven this way:
+The agents are driven this way:
 
 * **Claude Code** through its control protocol. It can be told more while it
   works, and its mode and model changed.
@@ -148,6 +148,13 @@ Claude Code, Codex and opencode are driven this way:
   and it cannot be told more while it works. Its models are every provider's,
   so the list is searched; the efforts offered are the usual ones, and one a
   model lacks is left at that computer's default.
+* **Grok** through the same protocol (`grok agent stdio`, grok 1.0.13 or
+  later: an older one is refused by its own service). It has no modes of its
+  own to set, so the two offered are this app's: asking before changes, and
+  never asking. Refusing a permission ends its turn.
+* **Cursor** through the same protocol (`cursor-agent acp`), after
+  `cursor-agent login` on that computer. **Not checked against a real turn
+  yet**; no model is offered, and the conversation runs with its own.
 
 No other agent can be driven in this version; their sessions are shown and
 cannot be continued.
@@ -169,8 +176,8 @@ cannot be continued.
 * **History comes only from a desktop Leon.** A headless `leon host` shares
   nothing, and a turn made from the phone appears in the computer's history
   only once its Leon imports it.
-* **Three agents.** Claude Code, Codex and opencode; sessions of other agents
-  can be read but not continued.
+* **Five agents.** Claude Code, Codex, opencode, Grok and Cursor; sessions of
+  other agents can be read but not continued.
 * **Unix hosts.** A turn starts through the owner's login shell, and browsing
   folders assumes `/` paths.
 * `wss://` uses the Mozilla root certificates bundled with the app
