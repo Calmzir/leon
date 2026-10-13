@@ -4,9 +4,10 @@
 
 ### Added
 
-* One interface for every agent, in beta. With the new setting **Agent
-  interface** on *Leon's own*, a session of Claude Code, Codex or opencode is a
-  conversation in Leon's own interface instead of the agent's program in a
+* One interface for every agent, experimental and off until you turn it on in
+  the new section Settings ▸ Experimental. With the setting **Agent
+  interface** on *Leon's own*, a session of Claude Code, Codex, opencode, Grok
+  or Cursor is a conversation in Leon's own interface instead of the agent's program in a
   terminal, on this computer, on a machine reached over SSH and on a paired
   computer alike: what you wrote, the agent's answer as
   Markdown, its steps folded into a line that opens, and its questions

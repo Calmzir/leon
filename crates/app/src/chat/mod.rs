@@ -16,7 +16,7 @@
 //!
 //! The window's side is `ui/chat.rs` (what the shell does) and
 //! `ui/chat_view.rs` (what it draws). The setting `agent_interface` chooses
-//! between this and the terminal; it is in beta and off by default.
+//! between this and the terminal; it is experimental (its own section of the settings) and off by default.
 
 pub mod complete;
 pub mod model;
@@ -40,11 +40,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_three_agents_of_the_catalogue_can_be_driven_and_a_custom_one_cannot() {
-        for agent in [AgentId::CLAUDE, AgentId::CODEX, AgentId::OPENCODE] {
+    fn the_agents_of_the_protocol_can_be_driven_and_the_others_cannot() {
+        for agent in [
+            AgentId::CLAUDE,
+            AgentId::CODEX,
+            AgentId::OPENCODE,
+            AgentId::GROK,
+            AgentId::CURSOR,
+        ] {
             assert!(adapter_of(agent).is_some(), "{agent:?}");
         }
         let custom = AgentId::parse("my-agent").expect("a valid id");
         assert!(adapter_of(custom).is_none());
+        // In the catalogue of agents, and not in the protocol's.
+        assert!(adapter_of(AgentId::KIMI).is_none());
     }
 }

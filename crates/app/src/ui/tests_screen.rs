@@ -155,7 +155,7 @@ fn the_screen_lists_every_section_and_the_options_of_the_one_chosen(cx: &mut Tes
     let dir = tempfile::tempdir().unwrap();
     let h = window(cx, &dir);
     open_screen(&h, cx);
-    for (number, _) in Section::ALL.iter().enumerate() {
+    for (number, _) in Section::listed_here().iter().enumerate() {
         assert!(h.shows_dynamic(format!("settings-section-{number}"), cx));
     }
     for key in ["theme_id", "theme", "interface_scale", "blueprint_lines"] {
