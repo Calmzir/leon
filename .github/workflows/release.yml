@@ -231,7 +231,24 @@ jobs:
           cp -R work/Leon.app work/image/
           ln -s /Applications work/image/Applications
           image="dist/leon-$VERSION-$PLATFORM.dmg"
-          hdiutil create -volname "Leon" -srcfolder work/image -ov -format UDZO "$image"
+          # hdiutil sizes the image from the folder and can come up short
+          # ("No space left on device", every time for the Intel build of
+          # 0.10.0): it is told the size, what the folder holds and room to
+          # spare. The image is compressed after, so the room costs nothing.
+          # Tried three times before the job fails, since the same call has
+          # also failed and then succeeded on a runner.
+          megabytes=$(( $(du -sm work/image | cut -f1) + 64 ))
+          made=false
+          for attempt in 1 2 3; do
+            if hdiutil create -volname "Leon" -srcfolder work/image -size "${megabytes}m" \
+              -ov -format UDZO "$image"; then
+              made=true
+              break
+            fi
+            echo "hdiutil could not make the image (attempt $attempt of 3)"
+            sleep 10
+          done
+          [ "$made" = true ]
           if [ "$HAS_MACOS_CERTIFICATE" = "true" ]; then
             codesign --force --timestamp --sign "$MACOS_SIGNING_IDENTITY" "$image"
             if [ "$HAS_APPLE_NOTARY" = "true" ]; then
